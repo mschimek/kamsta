@@ -1,0 +1,15 @@
+name: experiment_config
+cores: [128, 512, 1024, 2048, 4096, 8192]
+threads: [1]
+time_limit: 00:45:00
+graphs:
+  - graphtype: dummy
+
+config:
+  algorithm: [hybridBoruvka, filter_hybridBoruvka]
+  iterations: 4
+  weak_scaling_level: 1
+  local_kernelization_level: 1
+  max_edge_weight: 254
+  configfile: <absolute path to config file>
+

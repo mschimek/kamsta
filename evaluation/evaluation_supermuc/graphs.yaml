@@ -1,0 +1,32 @@
+name: experiment_config
+cores: [512]
+threads: [1, 2, 4, 8]
+time_limit: 00:30:00
+graphs:
+  - graphtype: RMAT
+    log_n : 17
+    log_m : 20
+  - graphtype: GNM
+    log_n : 17
+    log_m : 20
+  - graphtype: RGG_2D
+    log_n : 17
+    log_m : 20
+  - graphtype: RGG_3D
+    log_n : 17
+    log_m : 20
+  - graphtype: RHG
+    log_n : 17
+    log_m : 20
+  - graphtype: GRID_2D
+    log_n : 9
+
+
+config:
+  algorithm: [hybridBoruvka, filter_hybridBoruvka]
+  iterations: 4
+  weak_scaling_level: 1
+  local_kernelization_level: 1
+  max_edge_weight: 123
+
+

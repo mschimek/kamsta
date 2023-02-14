@@ -1,0 +1,19 @@
+name: experiment_config
+cores: [512, 1024, 2048, 4096, 8192]
+threads: [4]
+time_limit: 00:20:00
+graphs:
+  - graphtype: GNM
+    log_n : 18
+    log_m : 22
+ 
+
+ 
+
+config:
+  algorithm: [hybridBoruvka, filter_hybridBoruvka]
+  iterations: 4
+  weak_scaling_level: 1
+  local_kernelization_level: 1
+  max_edge_weight: 254
+
