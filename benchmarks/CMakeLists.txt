@@ -32,7 +32,7 @@ add_executable(growt_benchmarks growt.cpp)
 add_executable(parlay_test parlay_test.cpp)
 
 target_link_libraries(comm_benchmarks PRIVATE base_target timer)
-target_link_libraries(mst_benchmarks PRIVATE base_target timer kadis absl::base absl::strings absl::flat_hash_map graphs)
+target_link_libraries(mst_benchmarks PRIVATE base_target timer kadis graphs)
 target_link_libraries(local_mst_benchmarks PRIVATE base_target timer)
 target_link_libraries(growt_benchmarks PRIVATE base_target)
 target_link_libraries(parlay_test PRIVATE base_target)

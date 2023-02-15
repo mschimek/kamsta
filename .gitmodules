@@ -16,9 +16,6 @@
 [submodule "external/backward"]
 	path = external/backward
 	url = https://github.com/kamping-site/bakward-mpi.git
-[submodule "external/abseil"]
-	path = external/abseil
-	url = https://github.com/abseil/abseil-cpp.git
 [submodule "parlay_fork"]
 	path = external/parlay
 	url = git@github.com:mschimek/parlaylib.git

@@ -16,7 +16,6 @@ find_package(Threads REQUIRED)
 add_subdirectory(external/tlx)
 add_subdirectory(external/graphs)
 add_subdirectory(external/parlay)
-add_subdirectory(external/abseil)
 add_subdirectory(external/backward)
 
 add_library(growt INTERFACE)
