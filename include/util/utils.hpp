@@ -1,8 +1,6 @@
 #pragma once
 
-#include <definitions.hpp>
 #include <new>
-//#include <interface_types.hpp>
 #include <tbb/cache_aligned_allocator.h>
 
 #include <numeric>
@@ -10,11 +8,12 @@
 #include <util/macros.hpp>
 #include <utility>
 
-//#include "gbbs-fork/interface_types.hpp"
-#include <parlay/hash_table.h>
+#include "parlay/hash_table.h"
 #include <tbb/parallel_for.h>
 
+#include "definitions.hpp"
 #include "mpi/context.hpp"
+#include "shared_mem_parallel.hpp"
 #include "util/timer.hpp"
 
 namespace hybridMST {
@@ -148,10 +147,7 @@ struct SrcDstWeightIdOrder {
 
 template <typename Container, typename F>
 void map(Container& container, F&& f) {
-#pragma omp parallel for
-  for (std::size_t i = 0; i != container.size(); ++i) {
-    f(container[i], i);
-  }
+  parallel_for(0, container.size(), [&](std::size_t i) { f(container[i], i); });
 }
 
 template <typename Container, typename Transform>
@@ -160,36 +156,26 @@ auto filter_out_duplicates(const Container& container, Transform&& transform) {
   static_assert(std::is_integral_v<ValueType>);
   parlay::hashtable<parlay::hash_numeric<ValueType>> table(
       container.size(), parlay::hash_numeric<ValueType>{});
-#pragma omp parallel for
-  for (std::size_t i = 0; i < container.size(); ++i) {
-    table.insert(transform(container[i]));
-  }
+  parallel_for(0, container.size(),
+               [&](std::size_t i) { table.insert(transform(container[i])); });
   return table.entries();
 }
 
 template <typename It, typename F> void map(It begin, It end, F&& f) {
   const std::size_t size = std::distance(begin, end);
-#pragma omp parallel for
-  for (std::size_t i = 0; i < size; ++i) {
-    f(begin[i], i);
-  }
+  parallel_for(0, size, [&](std::size_t i) { f(begin[i], i); });
 }
 
 template <typename Container, typename Init>
 void assign_initialize(Container& container, Init&& init) {
-#pragma omp parallel for
-  for (std::size_t i = 0; i < container.size(); ++i) {
-    container[i] = init(i);
-  }
+  parallel_for(0, container.size(),
+               [&](std::size_t i) { container[i] = init(i); });
 }
 
 template <typename It, typename Init>
 void assign_initialize(It begin, It end, Init&& init) {
   const std::size_t size = std::distance(begin, end);
-#pragma omp parallel for
-  for (std::size_t i = 0; i < size; ++i) {
-    begin[i] = init(i);
-  }
+  parallel_for(0, size, [&](std::size_t i) { begin[i] = init(i); });
 }
 
 template <typename T, typename Container>
@@ -198,10 +184,8 @@ void append_second_to_first(non_init_vector<T>& vec,
   const std::size_t num_elems = vec.size();
   const std::size_t num_elems_to_append = data_to_append.size();
   vec.resize(num_elems + num_elems_to_append);
-#pragma omp parallel for
-  for (std::size_t i = 0; i < num_elems_to_append; ++i) {
-    vec[num_elems + i] = data_to_append[i];
-  }
+  parallel_for(0, num_elems_to_append,
+               [&](std::size_t i) { vec[num_elems + i] = data_to_append[i]; });
 }
 
 template <typename Container1, typename Container2>
@@ -212,51 +196,14 @@ combine(const Container1& container1, const Container2& container2) {
   static_assert(std::is_same_v<T1, T2>);
   non_init_vector<T1> recv_container(container1.size() + container2.size());
   const std::size_t size = container1.size();
-  tbb::parallel_for(TBB::IndexRange(0, container1.size()),
-                    [&](TBB::IndexRange r) {
-                      for (std::size_t i = r.begin(); i != r.end(); ++i)
-                        recv_container[i] = container1[i];
-                    });
+  parallel_for(0, container1.size(),
+               [&](std::size_t i) { recv_container[i] = container1[i]; });
 
-  tbb::parallel_for(TBB::IndexRange(0, container2.size()),
-                    [&](TBB::IndexRange r) {
-                      for (std::size_t i = r.begin(); i != r.end(); ++i)
-                        recv_container[size + i] = container2[i];
-                    });
+  parallel_for(0, container2.size(), [&](std::size_t i) {
+    recv_container[size + i] = container2[i];
+  });
   return recv_container;
 }
-
-// template <template <typename> typename Allocator>
-// inline std::vector<::gbbs::WEdgeId> convert_vertex_ids_to_4_byte(
-//     const std::vector<WEdgeId, Allocator<WEdgeId>>& edges) {
-//   std::vector<::gbbs::WEdgeId> converted_edgs(edges.size());
-//   const auto m = edges.size();
-//   tbb::parallel_for(TBB::IndexRange(0, m), [&](TBB::IndexRange r) {
-//     for (std::size_t i = r.begin(); i != r.end(); ++i) {
-//       converted_edgs[i].src = static_cast<::gbbs::uintE>(edges[i].src);
-//       converted_edgs[i].dst = static_cast<::gbbs::uintE>(edges[i].dst);
-//       converted_edgs[i].weight = static_cast<::gbbs::uintE>(edges[i].weight);
-//       converted_edgs[i].global_id = edges[i].global_id;
-//     }
-//   });
-//   return converted_edgs;
-// }
-//
-// template <template <typename> typename Allocator>
-// inline std::vector<WEdgeId> convert_vertex_ids_to_8_byte(
-//     const std::vector<::gbbs::WEdgeId, Allocator<::gbbs::WEdgeId>>& edges) {
-//   std::vector<WEdgeId> converted_edgs(edges.size());
-//   const auto m = edges.size();
-//   tbb::parallel_for(TBB::IndexRange(0, m), [&](TBB::IndexRange r) {
-//     for (std::size_t i = r.begin(); i != r.end(); ++i) {
-//       converted_edgs[i].src = static_cast<VId>(edges[i].src);
-//       converted_edgs[i].dst = static_cast<VId>(edges[i].dst);
-//       converted_edgs[i].weight = static_cast<VId>(edges[i].weight);
-//       converted_edgs[i].global_id = edges[i].global_id;
-//     }
-//   });
-//   return converted_edgs;
-// }
 
 inline bool is_local(const VId v, const VertexRange_& range) {
   return range.v_begin <= v && v < range.v_end;
@@ -353,9 +300,9 @@ template <typename T> bool is_TMSB_set(T t) {
   return (t & only_TMSB_set) == only_TMSB_set;
 }
 
-std::pair<std::vector<WEdge14>, VertexRange> inline convert(
+std::pair<std::vector<WEdge>, VertexRange> inline convert(
     const std::pair<std::vector<graphs::WEdge>, VertexRange>& p) {
-  auto res = std::make_pair(std::vector<WEdge14>{}, p.second);
+  auto res = std::make_pair(std::vector<WEdge>{}, p.second);
   res.first.resize(p.first.size());
   for (std::size_t i = 0; i < p.first.size(); ++i) {
     auto edge = p.first[i];
@@ -375,12 +322,11 @@ template <typename Edge> Edge flip_edge(const Edge& edge) {
 
 template <typename Edges> Edges inline flip_edges(const Edges& edges) {
   Edges flipped_edges(edges.size());
-#pragma omp parallel for
-  for (std::size_t i = 0; i < edges.size(); ++i) {
+  parallel_for(0, edges.size(), [&](std::size_t i) {
     auto& flipped_edge = flipped_edges[i];
     const auto& edge = edges[i];
     flipped_edge = flip_edge(edge);
-  }
+  });
   return flipped_edges;
 }
 template <typename Container> void dump(Container& cont) {
@@ -388,6 +334,7 @@ template <typename Container> void dump(Container& cont) {
   std::swap(tmp, cont);
 }
 
+// for debugging purposes only
 inline void wait_for_user(const std::string& desc) {
   mpi::MPIContext ctx;
   REORDERING_BARRIER;
@@ -395,7 +342,7 @@ inline void wait_for_user(const std::string& desc) {
     int i = 0;
     std::cout << desc << std::endl;
     std::cin >> i;
-    int volatile ii = i;
+    [[maybe_unused]] int volatile ii = i;
   }
   REORDERING_BARRIER;
 }
@@ -442,6 +389,67 @@ template <typename Edges> inline void print_statistics(const Edges& edges) {
                 << "): " << maximas[i] << " " << sums[i] << std::endl;
     }
   }
+}
+
+/// Compute number of local vertices assuming the array to be lexicographically
+/// sorted
+template <typename Edges>
+std::size_t get_number_local_vertices(const Edges& edges) {
+  if (edges.empty())
+    return 0;
+  return (edges.back().get_src() - edges.front().get_src()) + 1;
+}
+
+/// Returns max local vertice ID assuming the array to be lexicographically
+/// sorted.
+template <typename Edges> std::size_t get_max_local_vertex(const Edges& edges) {
+  if (edges.empty())
+    return 0;
+  return edges.back().get_src();
+}
+
+inline void print_on_root(const std::string& msg,
+                          const mpi::MPIContext& ctx = mpi::MPIContext()) {
+  if (ctx.rank() == 0) {
+    std::cout << msg << std::endl;
+  }
+}
+
+template <typename EdgeType> std::string get_edge_type_name() {
+  if (std::is_same_v<WEdge_4_1, EdgeType>) {
+    return "WEdge_4_1";
+  }
+  if (std::is_same_v<WEdge_5_1, EdgeType>) {
+    return "WEdge_5_1";
+  }
+  if (std::is_same_v<WEdge_6_1, EdgeType>) {
+    return "WEdge_6_1";
+  }
+  if (std::is_same_v<WEdge_4_4, EdgeType>) {
+    return "WEdge_4_4";
+  }
+  if (std::is_same_v<WEdge, EdgeType>) {
+    return "WEdge_8_4";
+  }
+  return "unknown edge type";
+}
+
+template <typename Edges>
+inline VertexRange_ create_vertex_range(const Edges& edges) {
+  if (edges.empty()) {
+    return VertexRange_{VID_UNDEFINED, VID_UNDEFINED};
+  }
+  return VertexRange_{edges.front().get_src(), edges.back().get_src() + 1};
+}
+
+///@brief For local edges (u,v) for which u and v can be represented with 32
+/// bits this functions returns (u << 32 | v)
+template <typename EdgeType>
+static VId get_combined_id(EdgeType& local_edge, VId v_min) {
+  VId combined_value = local_edge.get_src() - v_min;
+  combined_value <<= 32;
+  combined_value |= (local_edge.get_dst() - v_min);
+  return combined_value;
 }
 
 } // namespace hybridMST

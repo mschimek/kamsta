@@ -1,18 +1,43 @@
+// This code is part of the project "Theoretically Efficient Parallel Graph
+// Algorithms Can Be Fast and Scalable", presented at Symposium on Parallelism
+// in Algorithms and Architectures, 2018.
+// Copyright (c) 2018 Laxman Dhulipala, Guy Blelloch, and Julian Shun
+//
+// Permission is hereby granted, free of charge, to any person obtaining a copy
+// of this software and associated documentation files (the "Software"), to deal
+// in the Software without restriction, including without limitation the rights
+// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+// copies of the Software, and to permit persons to whom the Software is
+// furnished to do so, subject to the following conditions:
+//
+// The above copyright notice and this permission notice shall be included in
+// all  copies or substantial portions of the Software.
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+// SOFTWARE.
+
+// This file is based on https://github.com/ParAlg/gbbs/
+// and was modified by Matthias Schimek
+
 #pragma once
 
 #include <tbb/parallel_for.h>
+#include "gbbs_bridge/bridge.hpp"
 
 #include <algorithm>
-#include <algorithms/base_case_mst_algos.hpp>
 #include <execution>
 #include <numeric>
 #include <random>
 
+#include "algorithms/base_case_mst_algos.hpp"
 #include "datastructures/distributed_array.hpp"
 #include "datastructures/distributed_parent_array.hpp"
 #include "definitions.hpp"
-//#include "gbbs-fork/benchmarks/MinimumSpanningForest/Boruvka/interface.hpp"
-#include "algorithms/gbbs/bridge.hpp"
 #include "mpi/allreduce.hpp"
 #include "mpi/context.hpp"
 #include "parlay/delayed_sequence.h"
@@ -31,9 +56,6 @@
 #include "util/macros.hpp"
 #include "util/timer.hpp"
 #include "util/utils.hpp"
-
-// based on https://github.com/ParAlg/gbbs/ //TODO add license, correct
-// references
 
 namespace hybridMST {
 
@@ -101,7 +123,6 @@ void compute_min_edges(
     const auto& edge = edges[e_id];
     const VId& dst = edge.get_dst();
     const EdgeIdWeightDst id_weight_dst{e_id, edge.get_weight(), dst};
-    const EdgeIdWeightDst prev = min_edges[normalizer(edge.get_src())];
     hybridMST::write_min(min_edges[edge.get_src()], id_weight_dst, comp);
   });
   // SEQ_EX(ctx, PRINT_VECTOR(min_edges););
@@ -126,8 +147,7 @@ void allreduce_min(std::size_t n, const Edges& edges, const MinEdges& min_edges,
       WEdgeId reduce_edge;
       reduce_edge.set_src(src_);
       reduce_edge.set_dst(edge.get_dst());
-      reduce_edge.set_weight(edge.get_weight());
-      reduce_edge.set_edge_id(edge.get_edge_id());
+      reduce_edge.set_weight_and_edge_id(edge.get_weight(), edge.get_edge_id());
       allreduce_inout[i] = reduce_edge;
     }
   });
@@ -140,11 +160,11 @@ void allreduce_min(std::size_t n, const Edges& edges, const MinEdges& min_edges,
   //           ++i) { std::cout << allreduce_inout[i] << std::endl; };);
 }
 
-template <typename AllreduceInOut, typename Edges, typename Vertices,
+template <typename AllreduceInOut, typename Vertices,
           typename Parents, typename RootsInfo, typename ExhaustionInfo,
           typename MstEdges>
 void determine_mst_edges(std::size_t n, const AllreduceInOut& min_edges,
-                         const Edges& edges, const Vertices& vertices,
+                         const Vertices& vertices,
                          Parents& parents, RootsInfo& is_root,
                          ExhaustionInfo& exhausted, MstEdges& new_mst_edges) {
   mpi::MPIContext ctx;
@@ -221,7 +241,7 @@ void update_parents(std::size_t n, const Vertices& vertices, Parents& parents) {
   parlay_bridge::parallel_for(0, n, [&](size_t i) {
     const VId v = vertices[i];
     while (parents[v] != parents[parents[v]]) {
-      parents[v] = parents[parents[v]];
+      parents[v] = parents[parents[v]].load();
     }
   });
 }
@@ -345,7 +365,7 @@ inline std::size_t Boruvka(Span<EdgeType> edges, VId*& vertices,
 
     get_timer().start("determine_mst_edges", round);
     gbbs_boruvka_distributed::determine_mst_edges(
-        n, allreduce_inout_inital_indices, edges, vertices, parents, is_root,
+        n, allreduce_inout_inital_indices, vertices, parents, is_root,
         exhausted, new_mst_edges);
     get_timer().stop("determine_mst_edges", round);
     get_timer().start("add_new_mst", round);
@@ -379,16 +399,13 @@ template <class Edges>
 void dense_boruvka_allreduce(const std::size_t n, Edges& edges_,
                              std::vector<GlobalEdgeId>& mst_edge_global_ids) {
   mpi::MPIContext ctx;
-  auto edges_in = parlay_bridge::make_slice(edges_.data(), edges_.size());
-  constexpr bool is_output_activated = false;
   non_init_vector<std::atomic<EdgeIdWeightDst>> min_edges(n);
   auto parents =
-      parlay::sequence<VId>::from_function(n, [](size_t i) { return i; });
+      parlay::sequence<std::atomic<VId>>::from_function(n, [](size_t i) { return i; });
   auto exhausted =
       parlay::sequence<bool>::from_function(n, [](size_t) { return false; });
   mst_edge_global_ids.resize(n);
 
-  const std::size_t initial_n = n;
   std::size_t n_active = n;
   VId* vtxs = parlay_bridge::new_array_no_init<VId>(n_active);
   VId* next_vtxs = parlay_bridge::new_array_no_init<VId>(n_active);
@@ -396,7 +413,6 @@ void dense_boruvka_allreduce(const std::size_t n, Edges& edges_,
                               gbbs_boruvka_distributed::kDefaultGranularity,
                               [&](size_t i) { vtxs[i] = i; });
 
-  std::size_t round = 0;
   std::size_t nb_mst_edges_computed = 0;
   auto E = Span(edges_.data(), edges_.size());
   get_timer().start("boruvka_", 0);
@@ -418,13 +434,9 @@ void dense_boruvka_allreduce(const std::size_t n, Edges& edges_,
                              const non_init_vector<VId>& vertex_to_org_vertex,
                              ParentArray& parent_array) {
   mpi::MPIContext ctx;
-
-  // SEQ_EX(ctx, PRINT_VECTOR(edges_););
-  auto edges_in = parlay_bridge::make_slice(edges_.data(), edges_.size());
-  constexpr bool is_output_activated = true;
   non_init_vector<std::atomic<EdgeIdWeightDst>> min_edges(n);
   auto parents =
-      parlay::sequence<VId>::from_function(n, [](size_t i) { return i; });
+      parlay::sequence<std::atomic<VId>>::from_function(n, [](size_t i) { return i; });
   auto exhausted =
       parlay::sequence<bool>::from_function(n, [](size_t) { return false; });
   mst_edge_global_ids.resize(n);

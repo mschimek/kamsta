@@ -29,7 +29,6 @@ inline bool has_degree_one(std::size_t index, const Edges& edges) {
 
 template <typename Edges>
 auto get_local_edges(const Edges& edges, const VertexRange_ range) {
-  using EdgeType = typename Edges::value_type;
   auto local_edges = parlay::filter(edges, [&](const auto& edge) {
     return (edge.get_src() < edge.get_dst()) && is_true_local(edge, range);
   });
@@ -37,21 +36,20 @@ auto get_local_edges(const Edges& edges, const VertexRange_ range) {
 }
 
 template <typename Edges, typename MinCutWeights>
-auto get_local_edges(const Edges& edges, const VertexRange_ range, const MinCutWeights& min_cut_weights) {
-  using EdgeType = typename Edges::value_type;
-  auto normalizer = [&range](const VId& v) {
-    return normalize_v(v, range);
-  };
+auto get_local_edges(const Edges& edges, const VertexRange_ range,
+                     const MinCutWeights& min_cut_weights) {
+  auto normalizer = [&range](const VId& v) { return normalize_v(v, range); };
   auto local_edges = parlay::filter(edges, [&](const auto& edge) {
-    if(!is_true_local(edge, range) || (edge.get_src() > edge.get_dst())) {
+    if (!is_true_local(edge, range) || (edge.get_src() > edge.get_dst())) {
       return false;
     }
-      const auto w = edge.get_weight();
-      const bool is_heavier_than_cut_edge_src =
+    const auto w = edge.get_weight();
+    const bool is_heavier_than_cut_edge_src =
         min_cut_weights[normalizer(edge.get_src())].load().weight < w;
-      const bool is_heavier_than_cut_edge_dst =
+    const bool is_heavier_than_cut_edge_dst =
         min_cut_weights[normalizer(edge.get_dst())].load().weight < w;
-    const bool is_not_heavier_than_cut_edges = !is_heavier_than_cut_edge_src | !is_heavier_than_cut_edge_dst;
+    const bool is_not_heavier_than_cut_edges =
+        !is_heavier_than_cut_edge_src | !is_heavier_than_cut_edge_dst;
     return is_not_heavier_than_cut_edges;
   });
   return local_edges;

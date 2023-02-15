@@ -6,12 +6,14 @@
 #include "parlay/primitives.h"
 #include "parlay/sequence.h"
 
+#include "algorithms/algorithm_configurations.hpp"
 #include "algorithms/gbbs_reimplementation.hpp"
 #include "algorithms/hybrid_boruvka_substeps/duplicate_detection.hpp"
 #include "algorithms/hybrid_boruvka_substeps/edge_renaming.hpp"
 #include "algorithms/hybrid_boruvka_substeps/get_ghost_representatives.hpp"
 #include "algorithms/hybrid_boruvka_substeps/misc.hpp"
-#include "algorithms/local_contraction/mst_on_local_edgs.hpp"
+#include "algorithms/local_contraction/local_boruvka/local_mst_and_contraction.hpp"
+#include "algorithms/local_contraction/local_boruvka/local_mst_respecting_cut_edges.hpp"
 #include "algorithms/local_contraction/utils.hpp"
 #include "datastructures/distributed_graph.hpp"
 #include "definitions.hpp"
@@ -143,8 +145,8 @@ auto execute_contraction(Edges& edges, const VertexRange_ vertex_range,
   //     boruvka(vertex_range, local_edges_span, min_cut_weights_span, parents,
   //             mst_edge_ids.data() + num_already_found_mst_edges);
   const auto num_mst_edges = boruvka_filter(
-      vertex_range, local_edges_span, min_cut_weights_span, parents_span,
-      mst_edge_ids.data() + num_already_found_mst_edges);
+      vertex_range, local_edges_span, all_edges_span, min_cut_weights_span,
+      parents_span, mst_edge_ids.data() + num_already_found_mst_edges);
   mst_edge_ids.resize(num_already_found_mst_edges + num_mst_edges);
 
   REORDERING_BARRIER
@@ -178,20 +180,64 @@ auto execute_contraction(Edges& edges, const VertexRange_ vertex_range,
   get_timer().stop("local_kernelization_postprocessing1_remove", 0);
   get_timer().start("local_kernelization_postprocessing1_reorder", 0);
   reorder_splitted_edges(edges);
-  EdgeProcessor::remove_duplicates(edges, round); // could potentially be improved - shouldn't be too bad
+  EdgeProcessor::remove_duplicates(
+      edges, round); // could potentially be improved - shouldn't be too bad
   get_timer().stop("local_kernelization_postprocessing1_reorder", 0);
   get_timer().stop("local_kernelization_postprocessing1", 0);
   return parents;
 }
 
 } // namespace internal_local_contraction
+
+template <typename Edges> double compute_local_edge_ratio(const Edges& edges) {
+  const VertexRange_ vertex_range(edges.front().get_src(),
+                                  edges.back().get_src() + 1);
+
+  mpi::MPIContext ctx;
+  const std::size_t nb_local_edges =
+      parlay::count_if(edges, [&](const auto& edge) {
+        return is_true_local(edge, vertex_range);
+      });
+
+  const std::size_t num_local_edges_complete =
+      mpi::allreduce_sum(nb_local_edges, ctx);
+  const std::size_t num_edges_complete = mpi::allreduce_sum(edges.size(), ctx);
+
+  return static_cast<double>(num_local_edges_complete) / num_edges_complete;
+}
+template <typename Edges, typename MstEdgeIds, typename AlgorithmConfigType>
+void local_contraction_dispatcher(
+    const AlgorithmConfigType& algorithm_configuration, Edges& augmented_edges,
+    MstEdgeIds& mst_edge_ids, double threshold = 0.1) {
+
+  statistics_helper("graph_num_edges_before_kernelization",
+                    augmented_edges.size());
+
+  switch (algorithm_configuration.local_preprocessing) {
+  case LocalPreprocessing::NO_PREPROCESSING:
+    break; // nothing to do
+  case LocalPreprocessing::MODIFIED_BORUVKA:
+    local_contraction(augmented_edges, mst_edge_ids, threshold);
+    break;
+  case LocalPreprocessing::REDUCE_EDGES_THEN_BORUVKA:
+    if (compute_local_edge_ratio(augmented_edges) <= threshold) {
+      break;
+    }
+    get_timer().start("local_kernelization_boruvka_without_contract", 0);
+    augmented_edges = discard_local_non_mst_edges(augmented_edges);
+    get_timer().stop("local_kernelization_boruvka_without_contract", 0);
+    local_contraction(augmented_edges, mst_edge_ids, 0.0);
+    break;
+  }
+  statistics_helper("graph_num_edges_after_kernelization",
+                    augmented_edges.size());
+}
+
 template <typename Edges, typename MstEdgeIds>
 auto local_contraction(Edges&& edges, MstEdgeIds& mst_edge_ids,
                        double threshold = 0.1) {
   using namespace internal_local_contraction;
   mpi::MPIContext ctx;
-  using EdgeType = typename std::decay_t<Edges>::value_type;
-  // const VertexRange_ vertex_range(range.first, range.second + 1);
   const VertexRange_ vertex_range(edges.front().get_src(),
                                   edges.back().get_src() + 1);
   const std::size_t nb_local_edges =
@@ -199,7 +245,6 @@ auto local_contraction(Edges&& edges, MstEdgeIds& mst_edge_ids,
         return is_true_local(edge, vertex_range);
       });
 
-  const std::size_t nb_edges = edges.size();
   const std::size_t num_local_edges_complete =
       mpi::allreduce_sum(nb_local_edges, ctx);
   const std::size_t num_edges_complete = mpi::allreduce_sum(edges.size(), ctx);
@@ -250,6 +295,34 @@ auto local_contraction(Edges&& edges, MstEdgeIds& mst_edge_ids,
   get_timer().stop("local_kernelization_postprocessing2", 0);
   REORDERING_BARRIER
   return local_parent_array;
+}
+
+template <typename Edges, typename MstEdgeIds, typename AlgorithmConfigType>
+void local_contraction_dispatcher(
+    const AlgorithmConfigType& algorithm_configuration, Edges& augmented_edges,
+    MstEdgeIds& mst_edge_ids, ParentArray& parent_array,
+    double threshold = 0.1) {
+
+  statistics_helper("graph_num_edges_before_kernelization",
+                    augmented_edges.size());
+  switch (algorithm_configuration.local_preprocessing) {
+  case LocalPreprocessing::NO_PREPROCESSING:
+    break; // nothing to do
+  case LocalPreprocessing::MODIFIED_BORUVKA:
+    local_contraction(augmented_edges, mst_edge_ids, threshold);
+    break;
+  case LocalPreprocessing::REDUCE_EDGES_THEN_BORUVKA:
+    if (compute_local_edge_ratio(augmented_edges) <= threshold) {
+      break;
+    }
+    get_timer().start("local_kernelization_boruvka_without_contract", 0);
+    augmented_edges = discard_local_non_mst_edges(augmented_edges);
+    get_timer().stop("local_kernelization_boruvka_without_contract", 0);
+    local_contraction(augmented_edges, mst_edge_ids, parent_array, 0.0);
+    break;
+  }
+  statistics_helper("graph_num_edges_after_kernelization",
+                    augmented_edges.size());
 }
 
 template <typename Edges, typename MstEdgeIds>

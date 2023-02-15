@@ -10,9 +10,6 @@
 [submodule "external/KaDiS"]
 	path = external/KaDiS
 	url = https://github.com/MichaelAxtmann/KaDiS.git
-[submodule "external/parlay"]
-	path = external/parlay
-	url = https://github.com/cmuparlay/parlaylib.git
 [submodule "external/graphs"]
 	path = external/graphs
 	url = https://github.com/mschimek/graphs.git
@@ -22,9 +19,6 @@
 [submodule "external/abseil"]
 	path = external/abseil
 	url = https://github.com/abseil/abseil-cpp.git
-[submodule "external/Catch2"]
-	path = external/Catch2
-	url = https://github.com/catchorg/Catch2.git
-[submodule "external/gbbs-fork"]
-	path = external/gbbs-fork
-	url = https://git.scc.kit.edu/jj1592/gbbs-fork.git
+[submodule "parlay_fork"]
+	path = external/parlay
+	url = git@github.com:mschimek/parlaylib.git

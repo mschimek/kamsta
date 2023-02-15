@@ -14,8 +14,7 @@ public:
   LabelCache(std::size_t n) : map_(n * 1.1) {}
   template <typename Edges>
   void rename_edges(Edges& edges, const Weight& threshold_weight) {
-#pragma omp parallel for
-    for (std::size_t i = 0; i < edges.size(); ++i) {
+    parallel_for(0, edges.size(), [&](std::size_t i) {
       auto& edge = edges[i];
       VId src_label = edge.get_src();
       VId dst_label = edge.get_dst();
@@ -24,7 +23,7 @@ public:
         dst_label = 0;
         edge.set_src(src_label);
         edge.set_dst(dst_label);
-        continue;
+        return;
       }
       auto it_src_label = growt::find(map_, src_label);
       if (it_src_label != map_.end())
@@ -34,7 +33,7 @@ public:
         dst_label = (*it_dst_label).second;
       edge.set_src(src_label);
       edge.set_dst(dst_label);
-    }
+    });
   }
   void update_cache(const VId& key, const VId& value) {
     map_.insert_or_assign(key + 1, value);
@@ -53,14 +52,14 @@ struct RetrieveNewLabels {
         2 * edges.size(), parlay::hash_numeric<VId>{});
     get_timer().stop("retrieve_new_labels_init_init", round);
     get_timer().start("retrieve_new_labels_filter_init", round);
-#pragma omp parallel for
-    for (std::size_t i = 0; i < edges.size(); ++i) {
+    parallel_for(0, edges.size(), [&](std::size_t i) {
       auto& edge = edges[i];
-      if (edge.get_weight() <= threshold_weight)
-        continue;
+      if (edge.get_weight() <= threshold_weight) {
+        return;
+      }
       table.insert(edge.get_src());
       table.insert(edge.get_dst());
-    }
+    });
     auto entries = table.entries();
     mpi::MPIContext ctx;
     get_timer().stop("retrieve_new_labels_filter_init", round);
@@ -88,11 +87,10 @@ void rename_edges(int round, Span<EdgeType> edges,
   LabelCache cache_(v_parent_v.size());
   get_timer().stop("retrieve_new_labels_init", round);
   get_timer().start("update_cache_init", round);
-#pragma omp parallel for
-  for (std::size_t i = 0; i < v_parent_v.size(); ++i) {
+  parallel_for(0, v_parent_v.size(), [&](std::size_t i) {
     const auto& [v, parent_v] = v_parent_v[i];
     cache_.update_cache(v, parent_v);
-  }
+  });
   get_timer().stop("update_cache_init", round);
   get_timer().start("rename_labels_init", round);
   cache_.rename_edges(edges, threshold_weight);

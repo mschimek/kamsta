@@ -23,8 +23,9 @@ public:
   ParentArray(std::size_t n)
       : parents_(n,
                  [&](std::size_t i, std::size_t begin) { return i + begin; }),
-        has_edges_initially_(n,
-                 [&](std::size_t i, std::size_t begin) { return false; }){}
+        has_edges_initially_(n, [&](std::size_t /*i*/, std::size_t /*begin*/) {
+          return false;
+        }) {}
 
   template <typename Container>
   void update(const Container& orgId_new_parentIds) {
@@ -35,7 +36,8 @@ public:
     has_edges_initially_.set_values(non_isolated_vertices);
   }
   template <typename Vertices>
-  auto get_parents(const Vertices& vertices, InHashMap default_tag = InHashMap{}) const {
+  auto get_parents(const Vertices& vertices,
+                   InHashMap default_tag = InHashMap{}) const {
     return parents_.get_values(vertices);
   }
   template <typename Vertices>
@@ -59,9 +61,10 @@ public:
     const VId begin = v_begin();
     const VId end = v_end();
     std::size_t num_roots = 0;
-#pragma omp parallel for reduction(+: num_roots)
-    for(std::size_t i = begin; i < end; ++i) {
-      num_roots += ((get_parent(i) == i) && has_edges_initially_.get_value_locally(i));
+#pragma omp parallel for reduction(+ : num_roots)
+    for (std::size_t i = begin; i < end; ++i) {
+      num_roots +=
+          ((get_parent(i) == i) && has_edges_initially_.get_value_locally(i));
     }
     return mpi::allreduce_sum(num_roots);
   }

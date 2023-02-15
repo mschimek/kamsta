@@ -10,6 +10,7 @@
 #include "definitions.hpp"
 #include "mpi/context.hpp"
 #include "mpi/type_handling.hpp"
+#include "shared_mem_parallel.hpp"
 #include "util/allocators.hpp"
 #include "util/communication_volume_measurements.hpp"
 #include "util/macros.hpp"
@@ -21,11 +22,12 @@ namespace mpi {
 
 template <typename T> struct PreallocMessages {
   using MessageType = T;
-  PreallocMessages(const std::vector<uint64_t>& send_counts)
-      : send_counts{send_counts},
+  PreallocMessages(const std::vector<uint64_t>& send_counts_arg)
+      : send_counts{send_counts_arg},
         buffer(std::accumulate(send_counts.begin(), send_counts.end(), 0ull)) {}
-  PreallocMessages(const std::vector<uint64_t>& send_counts, uint64_t count_sum)
-      : send_counts{send_counts}, buffer(count_sum) {}
+  PreallocMessages(const std::vector<uint64_t>& send_counts_arg,
+                   uint64_t count_sum)
+      : send_counts{send_counts_arg}, buffer(count_sum) {}
   T& operator[](const std::size_t idx) { return buffer[idx]; }
   const T& operator[](const std::size_t idx) const { return buffer[idx]; }
   std::vector<uint64_t> send_counts;
@@ -34,8 +36,8 @@ template <typename T> struct PreallocMessages {
 
 template <typename T> struct PreallocSparseMessages {
   using PeCount = std::pair<int, uint64_t>;
-  PreallocSparseMessages(const std::vector<PeCount>& send_counts)
-      : send_counts{send_counts},
+  PreallocSparseMessages(const std::vector<PeCount>& send_counts_arg)
+      : send_counts{send_counts_arg},
         buffer(
             std::accumulate(send_counts.begin(), send_counts.end(), 0ull,
                             [](const uint64_t& accu, const PeCount& pe_count) {
@@ -59,18 +61,18 @@ template <typename T> struct RecvMessage {
 template <typename T> struct RecvMessages {
   using value_type = T;
   RecvMessages() = default;
-  RecvMessages(const std::vector<int32_t>& recv_displacements,
+  RecvMessages(const std::vector<int32_t>& recv_displacements_arg,
                const int32_t recv_counts_sum)
-      : recv_displacements{recv_displacements}, buffer(recv_counts_sum) {}
+      : recv_displacements{recv_displacements_arg}, buffer(recv_counts_sum) {}
   RecvMessages(const std::vector<non_init_vector<T>>& recv_data)
       : recv_displacements(recv_data.size()) {
-    for (int i = 1; i < recv_data.size(); ++i) {
+    for (std::size_t i = 1; i < recv_data.size(); ++i) {
       recv_displacements[i] =
           recv_displacements[i - 1] + recv_data[i - 1].size();
     }
     non_init_vector<T> buffer_tmp(recv_data.back().size() +
                                   recv_displacements.back());
-    for (int i = 0; i < recv_data.size(); ++i) {
+    for (std::size_t i = 0; i < recv_data.size(); ++i) {
       std::copy_n(recv_data[i].begin(), recv_data[i].size(),
                   buffer_tmp.begin() + recv_displacements[i]);
     }
@@ -145,7 +147,8 @@ sparse_alltoall(const PreallocMessages<DataType>& send_messages, int tag,
   get_timer().start_phase_measurement("alltoallv");
   std::vector<int32_t> send_counts(send_messages.send_counts.size());
   for (size_t i = 0; i < send_counts.size(); ++i) {
-    const std::size_t send_count = send_messages.send_counts[i];
+    [[maybe_unused]] const std::size_t send_count =
+        send_messages.send_counts[i];
     MPI_ASSERT_(send_count < std::numeric_limits<int32_t>::max(), send_count);
     send_counts[i] = static_cast<int32_t>(send_messages.send_counts[i]);
   }
@@ -319,10 +322,9 @@ std::vector<Task, tbb::cache_aligned_allocator<Task>> inline create_tasks(
   CacheAlignedVector tasks(num_tasks);
   // SEQ_EX(ctx, PRINT_VAR(num_tasks); PRINT_VAR(num_elements);
   // PRINT_CONTAINER_WITH_INDEX(tasks););
-#pragma omp parallel for
-  for (std::size_t i = 0; i < num_tasks; ++i) {
+  parallel_for(0, num_tasks, [&](std::size_t i) {
     tasks[i] = Task(i, num_elements, num_tasks, num_destinations);
-  };
+  });
   // SEQ_EX(ctx, PRINT_VAR(num_tasks); PRINT_VAR(num_elements);
   // PRINT_CONTAINER_WITH_INDEX(tasks););
   return tasks;
@@ -355,8 +357,8 @@ inline void analysis(std::vector<size_t> send_counts) {
   }
 }
 
-template <
-    typename Container, typename Filter, typename Transformer, typename DstCalculator>
+template <typename Container, typename Filter, typename Transformer,
+          typename DstCalculator>
 inline auto twopass_alltoallv_openmp_special(
     Container&& data, Filter&& filter, Transformer&& transformer,
     DstCalculator&& dstCalculator, mpi::MPIContext ctx = mpi::MPIContext{},
@@ -365,27 +367,25 @@ inline auto twopass_alltoallv_openmp_special(
   using TransformedT =
       std::invoke_result_t<Transformer, const typename Container_::value_type&,
                            const std::size_t&>;
-          std::size_t nb_threads = ctx.threads_per_mpi_process();
+  std::size_t nb_threads = ctx.threads_per_mpi_process();
   std::size_t max_nb_dst = ctx.size();
   auto tasks = create_tasks(data.size(), nb_threads, max_nb_dst);
   // get_timer().start_phase_measurement("twopass_loop1");
 
   non_init_vector<PEID> destinations(data.size());
-#pragma omp parallel for
-  for (std::size_t i = 0; i < tasks.size(); ++i) {
-    // for (std::size_t i = r.begin(); i < r.end(); ++i) {
+  parallel_for(0, tasks.size(), [&](std::size_t i) {
     auto& task = tasks[i];
     for (std::size_t j = task.idx_begin; j < task.idx_end; ++j) {
       const auto& elem = data[j];
       if (filter(elem, j)) {
         destinations[j] = -1;
-        continue;
+      } else {
+        const PEID destination_pe = dstCalculator(elem, j);
+        destinations[j] = destination_pe;
+        ++task.send_counts[destination_pe];
       }
-      const PEID destination_pe = dstCalculator(elem, j);
-      destinations[j] = destination_pe;
-      ++task.send_counts[destination_pe];
     }
-  }
+  });
 
   // get_timer().stop_phase_measurement("twopass_loop1");
   // get_timer().start_phase_measurement("twopass_accounting");
@@ -407,20 +407,18 @@ inline auto twopass_alltoallv_openmp_special(
   std::vector<std::size_t> send_displs(max_nb_dst, 0);
   std::exclusive_scan(init.begin(), init.end(), send_displs.begin(), 0ull);
 
-#pragma omp parallel for
-  for (std::size_t i = 0; i < tasks.size(); ++i) {
+  parallel_for(0, tasks.size(), [&](std::size_t i) {
     auto& task = tasks[i];
     for (std::size_t j = task.idx_begin; j < task.idx_end; ++j) {
       const auto& elem = data[j];
       const auto dst = destinations[j];
-      if (dst == -1) {
-        continue;
+      if (dst != -1) {
+        const auto idx = send_displs[dst] + task.send_counts[dst];
+        send_messages[idx] = transformer(elem, j);
+        ++task.send_counts[dst];
       }
-      const auto idx = send_displs[dst] + task.send_counts[dst];
-      send_messages[idx] = transformer(elem, j);
-      ++task.send_counts[dst];
     }
-  }
+  });
   // get_timer().stop_phase_measurement("twopass_loop2");
   if constexpr (std::is_rvalue_reference_v<Container&&>) {
     dump(data);

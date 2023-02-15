@@ -2,7 +2,6 @@
 
 #include <execution>
 
-#include "algorithms/collection_on_subgroup.hpp"
 #include "datastructures/growt.hpp"
 #include "definitions.hpp"
 #include "is_representative_computation.hpp"
@@ -92,15 +91,13 @@ struct ComputeRepresentative_Base {
   initialize_predecessors(const Graph& graph,
                           const non_init_vector<LocalEdgeId>& min_edge_idxs,
                           Predecessors& predecessors) {
-#pragma omp parallel for
-    for (std::size_t i = 0; i < predecessors.size(); ++i) {
+    parallel_for(0, predecessors.size(), [&](std::size_t i) {
       const LocalEdgeId idx = min_edge_idxs[i];
-      if (!is_defined(idx)) {
-        continue;
+      if (is_defined(idx)) {
+        const VId& dst_id = graph.edges()[idx].get_src(); //@TODO is this right?
+        predecessors[i] = dst_id;
       }
-      const VId& dst_id = graph.edges()[idx].get_src(); //@TODO is this right?
-      predecessors[i] = dst_id;
-    }
+    });
   }
 };
 
@@ -143,9 +140,9 @@ struct ComputeRepresentative : public ComputeRepresentative_Base {
                                              transformer, dst_computer);
       auto filter_reply = False_Predicate{};
       auto transformer_reply = [&](const auto& elem, const std::size_t) {
-        const Edge& edge = elem.payload;
-        const auto local_id = graph.get_local_id(edge.dst);
-        return VertexPredecessorPePred{edge.src, predecessors[local_id],
+        const Edge& edge = elem.payload();
+        const auto local_id = graph.get_local_id(edge.get_dst());
+        return VertexPredecessorPePred{edge.get_src(), predecessors[local_id],
                                        home_pe_predecessors[local_id]};
       };
       auto return_sender = [](const auto& elem, std::size_t) {
@@ -158,12 +155,11 @@ struct ComputeRepresentative : public ComputeRepresentative_Base {
       if (ctx.rank() == 0) {
         std::cout << " received reply: " << round << std::endl;
       }
-#pragma omp parallel for
-      for (std::size_t i = 0; i < reply.buffer.size(); ++i) {
+      parallel_for(0, reply.buffer.size(), [&](std::size_t i) {
         const auto& [src, predecessor, pe_of_predecessor] = reply.buffer[i];
         predecessors[src] = predecessor;
         home_pe_predecessors[src] = pe_of_predecessor;
-      }
+      });
       get_timer().stop("reps_jumping_jumping_inner_write", round);
       get_timer().stop("reps_jumping_jumping_inner_inner", round);
       asm volatile("" ::: "memory");
@@ -205,8 +201,8 @@ struct ComputeRepresentative : public ComputeRepresentative_Base {
 
       auto filter_reply = False_Predicate{};
       auto transformer_reply = [&](const Edge& edge, const std::size_t) {
-        const auto local_id = graph.get_local_id(edge.dst);
-        return Edge{edge.src, predecessors[local_id]};
+        const auto local_id = graph.get_local_id(edge.get_dst());
+        return Edge{edge.get_src(), predecessors[local_id]};
       };
       auto dst_computer_reply = [&](const Edge&, const std::size_t i) {
         return request.get_pe(i);
@@ -222,11 +218,10 @@ struct ComputeRepresentative : public ComputeRepresentative_Base {
       get_timer().start("reps_jumping_jumping_inner_write", round);
       if (ctx.rank() == 0)
         std::cout << " received reply: " << round << std::endl;
-#pragma omp parallel for
-      for (std::size_t i = 0; i < reply.buffer.size(); ++i) {
+      parallel_for(0, reply.buffer.size(), [&](std::size_t i) {
         const auto& [src, dst] = reply.buffer[i];
         predecessors[src] = dst;
-      }
+      });
       get_timer().stop("reps_jumping_jumping_inner_write", round);
       get_timer().stop("reps_jumping_jumping_inner_inner", round);
       asm volatile("" ::: "memory");
@@ -253,14 +248,13 @@ struct ComputeRepresentative : public ComputeRepresentative_Base {
       parlay::hashtable<parlay::hash_numeric<VId>> table(
           num_queries, parlay::hash_numeric<VId>{});
 
-#pragma omp parallel for
-      for (std::size_t i = 0; i < num_queries; ++i) {
+      parallel_for(0, num_queries, [&](std::size_t i) {
         const VId local_id_to_query = vertices_to_query_local_id[i];
         const VId predecessor = predecessors[local_id_to_query];
         if (!ComputeRepresentative::is_msb_set(predecessor)) {
           table.insert(predecessor);
         }
-      }
+      });
       auto unique_predecessors = table.entries();
       SEQ_EX(ctx, PRINT_VECTOR(unique_predecessors.size());
              PRINT_VECTOR(vertices_to_query_local_id.size()););
@@ -291,8 +285,7 @@ struct ComputeRepresentative : public ComputeRepresentative_Base {
           ctx.size(), ctx.threads_per_mpi_process());
 
       growt::GlobalVIdMap<VId> grow_map{reply.buffer.size() * 1.2};
-#pragma omp parallel for
-      for (std::size_t i = 0; i < reply.buffer.size(); ++i) {
+      parallel_for(0, reply.buffer.size(), [&](std::size_t i) {
         const auto [requested_predecessor, replied_predecessor] =
             reply.buffer[i];
         const auto [it, _] =
@@ -301,17 +294,16 @@ struct ComputeRepresentative : public ComputeRepresentative_Base {
           std::cout << "growt wrong insert" << std::endl;
           std::abort();
         }
-      }
+      });
       // SEQ_EX(ctx, PRINT_VECTOR(predecessors););
-#pragma omp parallel for
-      for (std::size_t i = 0; i < vertices_to_query_local_id.size(); ++i) {
+      parallel_for(0, vertices_to_query_local_id.size(), [&](std::size_t i) {
         const VId local_id_to_query = vertices_to_query_local_id[i];
         const VId& predecessor = predecessors[local_id_to_query];
-        if (ComputeRepresentative::is_msb_set(predecessor))
-          continue;
-        auto it = grow_map.find(predecessor + 1);
-        predecessors[local_id_to_query] = (*it).second;
-      }
+        if (!ComputeRepresentative::is_msb_set(predecessor)) {
+          auto it = grow_map.find(predecessor + 1);
+          predecessors[local_id_to_query] = (*it).second;
+        }
+      });
       // SEQ_EX(ctx, PRINT_VECTOR(vertices_to_query_local_id);
       // PRINT_VECTOR(predecessors); PRINT_VECTOR(reply.buffer););
     }
@@ -329,117 +321,41 @@ struct ComputeRepresentative : public ComputeRepresentative_Base {
     mpi::MPIContext ctx;
     const int num_threads = ctx.threads_per_mpi_process();
     std::vector<CachelineAlignedType<std::size_t>> counts(num_threads, 0ull);
-#pragma omp parallel for schedule(static)
-    for (std::size_t i = 0; i < min_edge_idxs.size(); ++i) {
+    non_init_vector<VId> vertices_to_query_local_id;
+#pragma omp parallel
+    {
       const auto thread_id = omp_get_thread_num();
-      const LocalEdgeId idx = min_edge_idxs[i];
-      if (!is_defined(idx)) {
-        continue;
+#pragma omp for schedule(static)
+      for (std::size_t i = 0; i < min_edge_idxs.size(); ++i) {
+        const LocalEdgeId idx = min_edge_idxs[i];
+        if (is_defined(idx)) {
+          const VId& dst_id = graph.edges()[idx].get_dst();
+          if (is_representative[i] == 1) {
+            predecessors[i] = ComputeRepresentative::set_msb(
+                predecessors[i]); // roots point to themselves
+          } else {
+            predecessors[i] = dst_id;
+            ++counts[thread_id];
+          }
+        }
       }
-      const VId& dst_id = graph.edges()[idx].get_dst();
-      if (is_representative[i] == 1) {
-        predecessors[i] = ComputeRepresentative::set_msb(
-            predecessors[i]); // roots point to themselves
-      } else {
-        predecessors[i] = dst_id;
-        ++counts[thread_id];
-      }
-    }
-    std::partial_sum(counts.begin(), counts.end(), counts.begin());
-    non_init_vector<VId> vertices_to_query_local_id(counts.back());
+#pragma omp single
+{
+      std::partial_sum(counts.begin(), counts.end(), counts.begin());
+      vertices_to_query_local_id.resize(counts.back());
+}
 
-#pragma omp parallel for schedule(static)
-    for (std::size_t i = 0; i < min_edge_idxs.size(); ++i) {
-      const auto thread_id = omp_get_thread_num();
-      const LocalEdgeId idx = min_edge_idxs[i];
-      if (!is_defined(idx)) {
-        continue;
+#pragma omp for schedule(static)
+      for (std::size_t i = 0; i < min_edge_idxs.size(); ++i) {
+        const LocalEdgeId idx = min_edge_idxs[i];
+        if (is_defined(idx) && is_representative[i] != 1) {
+          --counts[thread_id];
+          vertices_to_query_local_id[counts[thread_id]] = i;
+        }
       }
-      if (is_representative[i] == 1)
-        continue;
-      --counts[thread_id];
-      vertices_to_query_local_id[counts[thread_id]] = i;
     }
     return vertices_to_query_local_id;
   }
-
-  //  template <typename Graph>
-  //  static non_init_vector<VId>
-  //  compute_representatives(const Graph& graph,
-  //                          const non_init_vector<uint8_t>& is_representative,
-  //                          const non_init_vector<LocalEdgeId>& min_edge_idxs,
-  //                          std::size_t global_round) {
-  //    get_timer().start_phase("representative_computation");
-  //    asm volatile("" ::: "memory");
-  //    std::vector<VId, default_init_allocator<VId>>
-  //    predecessors(graph.local_n()); asm volatile("" ::: "memory");
-  //    {
-  //      get_timer().start("compute_reps_consec_vertices", global_round);
-  //      mpi::MPIContext ctx;
-  //      const auto& split_locator = graph.split_locator();
-  //      const int num_threads = ctx.threads_per_mpi_process();
-  //      initialize_predecessors(graph, min_edge_idxs, predecessors);
-  //      // consecutive_vertex_ids(graph, is_representative, predecessors);
-  //      asm volatile("" ::: "memory");
-  //      get_timer().stop("compute_reps_consec_vertices", global_round);
-  //
-  //      get_timer().start("compute_reps_init", global_round);
-  //      asm volatile("" ::: "memory");
-  //      non_init_vector<VId> vertices_to_query_local_id =
-  //          compute_vertices_to_query(graph, predecessors, is_representative,
-  //                                    min_edge_idxs);
-  //      asm volatile("" ::: "memory");
-  //      get_timer().stop("compute_reps_init", global_round);
-  //
-  //      get_timer().start("compute_reps_jumping_complete", global_round);
-  //      asm volatile("" ::: "memory");
-  //      const std::size_t measurement_offset = global_round * 20;
-  //
-  //      std::size_t num_remaining_elems = vertices_to_query_local_id.size();
-  //      non_init_vector<VId>
-  //      vertices_to_query_local_id_tmp(num_remaining_elems); VId*
-  //      ptr_v_to_query = vertices_to_query_local_id.data(); VId*
-  //      ptr_v_to_query_tmp = vertices_to_query_local_id_tmp.data(); int round
-  //      = 0; while (pointer_jumping_round_two_level(
-  //          graph, Span(ptr_v_to_query, num_remaining_elems), predecessors,
-  //          measurement_offset + round)) {
-  //        // get_timer().add("compute_reps_jumping_num_queries",
-  //        //                 measurement_offset + round, num_remaining_elems,
-  //        //                 {Timer::DatapointsOperation::ID});
-  //        asm volatile("" ::: "memory");
-  //        get_timer().start("reps_jumping_remove", measurement_offset +
-  //        round); asm volatile("" ::: "memory"); parlay::slice
-  //        in(ptr_v_to_query, ptr_v_to_query + num_remaining_elems);
-  //        parlay::slice out(ptr_v_to_query_tmp,
-  //                          ptr_v_to_query_tmp + num_remaining_elems);
-  //        num_remaining_elems =
-  //            parlay::filter_into(in, out, [&](const VId local_id) {
-  //              const VId pred = predecessors[local_id];
-  //              return !ComputeRepresentative::is_msb_set(pred);
-  //            });
-  //        std::swap(ptr_v_to_query, ptr_v_to_query_tmp);
-  //        asm volatile("" ::: "memory");
-  //        get_timer().stop("reps_jumping_remove", measurement_offset + round);
-  //        asm volatile("" ::: "memory");
-  //        ++round;
-  //      }
-  //      asm volatile("" ::: "memory");
-  //      get_timer().stop("compute_reps_jumping_complete", global_round);
-  //
-  //      get_timer().start("compute_reps_jumping_remove", global_round);
-  //      asm volatile("" ::: "memory");
-  //#pragma omp parallel for
-  //      for (std::size_t i = 0; i < predecessors.size(); ++i) {
-  //        auto& pred = predecessors[i];
-  //        pred = ComputeRepresentative::reset_msb(pred);
-  //      }
-  //      asm volatile("" ::: "memory");
-  //      get_timer().stop("compute_reps_jumping_remove", global_round);
-  //      asm volatile("" ::: "memory");
-  //    }
-  //    get_timer().stop_phase();
-  //    return predecessors;
-  //  }
 
   template <typename Graph>
   static non_init_vector<VId>
@@ -507,7 +423,7 @@ struct ComputeRepresentative : public ComputeRepresentative_Base {
     get_timer().stop_phase();
     return representatives.extract_predecessors();
   }
-};
+}; // namespace hybridMST
 struct UpdateParentArray {
   template <typename Graph>
   static void execute(const Graph& graph, ParentArray& parent_array,

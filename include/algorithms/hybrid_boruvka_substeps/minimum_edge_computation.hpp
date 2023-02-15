@@ -53,11 +53,10 @@ struct MinimumEdge {
   static non_init_vector<LocalEdgeId> EdgeIdWeightDst_to_id(
       const non_init_vector<std::atomic<EdgeIdWeightDst>>& edgeId_weight_dsts) {
     non_init_vector<LocalEdgeId> edgeIds(edgeId_weight_dsts.size());
-#pragma omp parallel for
-    for (std::size_t i = 0; i < edgeId_weight_dsts.size(); ++i) {
+    parallel_for(0, edgeId_weight_dsts.size(), [&](std::size_t i) {
       const auto elem = edgeId_weight_dsts[i].load();
       edgeIds[i] = elem.edge_id;
-    }
+    });
     return edgeIds;
   }
 };
@@ -112,13 +111,12 @@ struct MinimumEdgeOpenMP : public MinimumEdge {
       return lhs.weight < rhs.weight;
     };
 
-#pragma omp parallel for
-    for (std::size_t i = 0; i < graph.edges().size(); ++i) {
+    parallel_for (0, graph.edges().size(), [&](std::size_t i) {
       const auto& elem = graph.edges()[i];
       const EdgeIdWeightDst id_weight{static_cast<uint32_t>(i),
                                       elem.get_weight(), elem.get_dst()};
       write_min(min_edges[graph.get_local_id(elem.get_src())], id_weight, comp);
-    }
+    });
     return EdgeIdWeightDst_to_id(min_edges);
   }
 };

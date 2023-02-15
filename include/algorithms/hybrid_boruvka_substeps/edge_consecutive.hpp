@@ -5,6 +5,7 @@
 
 #include "datastructures/growt.hpp"
 #include "definitions.hpp"
+#include "duplicate_detection.hpp"
 #include "edge_renaming.hpp"
 #include "get_ghost_representatives.hpp"
 #include "mpi/allreduce.hpp"
@@ -39,10 +40,9 @@ struct MakeVerticesConsecutive {
     const std::size_t new_global_num_vertices =
         mpi::allreduce_sum(num_distinct_vertices);
     non_init_vector<VId> local_id_new_name(num_vertices);
-#pragma omp parallel for
-    for (std::size_t i = 0; i < num_vertices; ++i) {
+    parallel_for(0, num_vertices, [&](std::size_t i) {
       local_id_new_name[i] = global_prefix_adjusted + i;
-    }
+    });
 
     // SEQ_EX(ctx, PRINT_VECTOR(graph.edges());
     // PRINT_VECTOR(local_id_new_name););
@@ -73,16 +73,14 @@ struct MakeVerticesConsecutive_SmallVertexSize
     const std::size_t new_global_num_vertices =
         mpi::allreduce_sum(num_distinct_vertices);
     non_init_vector<VId> local_id_new_name(num_vertices);
-#pragma omp parallel for
-    for (std::size_t i = 0; i < num_vertices; ++i) {
+    parallel_for(0, num_vertices, [&](std::size_t i) {
       local_id_new_name[i] = global_prefix_adjusted + i;
-    }
+    });
     non_init_vector<VId> compactifiedId_prevId(num_distinct_vertices);
     const bool is_not_home_of_v_min = !locator.is_home_of_v_min();
-#pragma omp parallel for
-    for (std::size_t i = 0; i < num_distinct_vertices; ++i) {
+    parallel_for(0, num_distinct_vertices, [&](std::size_t i) {
       compactifiedId_prevId[i] = graph.get_global_id(i + is_not_home_of_v_min);
-    }
+    });
     compactifiedId_prevId = mpi::allgatherv(compactifiedId_prevId);
 
     // SEQ_EX(ctx, PRINT_VECTOR(local_id_new_name););
@@ -92,11 +90,10 @@ struct MakeVerticesConsecutive_SmallVertexSize
                                                   round);
 
     growt::GlobalVIdMap<VId> grow_map(compactifiedId_prevId.size() * 1.25);
-#pragma omp parallel for
-    for (std::size_t i = 0; i < compactifiedId_prevId.size(); ++i) {
+    parallel_for(0, compactifiedId_prevId.size(), [&](std::size_t i) {
       const auto& prevId = compactifiedId_prevId[i];
       grow_map.insert(prevId + 1, i);
-    }
+    });
     EdgeRenamer::rename_edges(graph, local_id_new_name,
                               name_newName_ghost_vertices_);
     EdgeProcessor::remove_self_loops(graph.edges(), round);
@@ -116,19 +113,15 @@ struct MakeVerticesConsecutive_WithoutAllgatherv
         mpi::exscan_sum(num_distinct_vertices, ctx, std::size_t{0});
     const std::size_t global_prefix_adjusted =
         locator.is_home_of_v_min() ? global_prefix : global_prefix - 1;
-    const std::size_t new_global_num_vertices =
-        mpi::allreduce_sum(num_distinct_vertices);
     non_init_vector<VId> local_id_new_name(num_vertices);
-#pragma omp parallel for
-    for (std::size_t i = 0; i < num_vertices; ++i) {
+    parallel_for(0, num_vertices, [&](std::size_t i) {
       local_id_new_name[i] = global_prefix_adjusted + i;
-    }
+    });
     non_init_vector<VId> compactifiedId_prevId(num_distinct_vertices);
     const bool is_not_home_of_v_min = !locator.is_home_of_v_min();
-#pragma omp parallel for
-    for (std::size_t i = 0; i < num_distinct_vertices; ++i) {
+    parallel_for(0, num_distinct_vertices, [&](std::size_t i) {
       compactifiedId_prevId[i] = graph.get_global_id(i + is_not_home_of_v_min);
-    }
+    });
     const PEID root = 0;
     compactifiedId_prevId =
         mpi::two_level::gatherv(compactifiedId_prevId, root);
@@ -139,11 +132,10 @@ struct MakeVerticesConsecutive_WithoutAllgatherv
                                                   round);
 
     growt::GlobalVIdMap<VId> grow_map(compactifiedId_prevId.size() * 1.25);
-#pragma omp parallel for
-    for (std::size_t i = 0; i < compactifiedId_prevId.size(); ++i) {
+    parallel_for(0, compactifiedId_prevId.size(), [&](std::size_t i) {
       const auto& prevId = compactifiedId_prevId[i];
       grow_map.insert(prevId + 1, i);
-    }
+    });
     EdgeRenamer::rename_edges(graph, local_id_new_name,
                               name_newName_ghost_vertices_);
     EdgeProcessor::remove_self_loops(graph.edges(), round);

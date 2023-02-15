@@ -27,7 +27,7 @@ inline void local_kruskal(std::vector<WEdgeId>& edges,
   for (auto& elem : edges) {
     if (uf.find(elem.get_src()) == uf.find(elem.get_dst()))
       continue;
-    global_edge_ids.push_back(elem.global_id);
+    global_edge_ids.push_back(elem.get_global_id());
     uf.unify(elem.get_src(), elem.get_dst());
   }
 }

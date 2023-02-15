@@ -7,14 +7,12 @@
 #include "AmsSort/AmsSort.hpp"
 #include "RQuick/RQuick.hpp"
 
-//#include "algorithms/gbbs_reimplementation.hpp"
 #include "algorithms/distributed_partitioning.hpp"
-//#include "algorithms/local_contraction_local_edge_removal.hpp"
+#include "algorithms/twolevel_sorting/twolevel_sorting.hpp"
 #include "datastructures/distributed_array.hpp"
 #include "datastructures/distributed_graph.hpp"
 #include "datastructures/distributed_parent_array.hpp"
 #include "datastructures/growt.hpp"
-//#include "datastructures/lookup_map.hpp"
 #include "definitions.hpp"
 #include "mpi/alltoall.hpp"
 #include "mpi/context.hpp"
@@ -27,8 +25,8 @@
 namespace hybridMST {
 
 template <typename Graph>
-inline bool stop_boruvka(const Graph& graph, const std::size_t m_initial,
-                         const std::size_t n_initial) {
+inline bool stop_boruvka(const Graph& graph, const std::size_t /*m_initial*/,
+                         const std::size_t /*n_initial*/) {
   mpi::MPIContext ctx;
   const auto min_num_edges = mpi::allreduce_min(graph.edges().size());
   const auto max_num_edges = mpi::allreduce_max(graph.edges().size());
@@ -140,7 +138,6 @@ struct RedistributeViaSelectedSorter {
     }
     auto& timer = get_timer();
     timer.start_phase("redistribution");
-    SrcDstWeightOrder<EdgeType> comp;
     twolevel_partition(edges, SrcDstWeightOrder<EdgeType>{});
     timer.stop_phase();
   }
@@ -153,7 +150,8 @@ struct GetMstEdge {
                         edge_id_offsets.begin(), 0ull);
     return edge_id_offsets;
   }
-  static PEID get_pe(const GlobalEdgeId& id, const auto& edge_offsets) {
+  template <typename Offset>
+  static PEID get_pe(const GlobalEdgeId& id, const Offset& edge_offsets) {
     auto it = std::upper_bound(edge_offsets.begin(), edge_offsets.end(), id);
     --it;
     return std::distance(edge_offsets.begin(), it);
@@ -183,13 +181,15 @@ struct GetMstEdge {
     auto task = [&](uint task_id) {
       const std::size_t m = global_ids.buffer.size();
       const std::size_t t = ctx.threads_per_mpi_process();
-      const std::size_t begin = m / t * task_id;
-      const std::size_t end = m / t * (task_id + 1) + m % t;
+      const std::size_t begin = (m / t) * task_id;
+      const bool is_last_thread = (task_id + 1) == t;
+      const std::size_t remainder = is_last_thread ? (m % t) : 0ull;
+      const std::size_t end = (m / t) * (task_id + 1) + remainder;
       for (std::size_t i = begin; i < end; ++i) {
         const auto& global_id = global_ids.buffer[i];
         const auto local_id = global_id - edge_id_offsets[ctx.rank()];
         const auto& edge = ref_edges[local_id];
-        WEdge out_edge{edge.get_src(), edge.get_dst(),edge.get_weight()};
+        WEdge out_edge{edge.get_src(), edge.get_dst(), edge.get_weight()};
         mst_edges[i] = out_edge;
       }
     };
@@ -198,10 +198,8 @@ struct GetMstEdge {
     //   const auto local_id = global_id - edge_id_offsets[ctx.rank()];
     //   mst_edges.push_back(ref_edges[local_id]);
     // }
-#pragma omp parallel for
-    for (std::size_t i = 0; i < ctx.threads_per_mpi_process(); ++i) {
-      task(i);
-    }
+    parallel_for(0, static_cast<std::size_t>(ctx.threads_per_mpi_process()),
+                 [&](std::size_t i) { task(i); });
     get_timer().stop("send_mst_edges_back_lookup", 0);
 
     return mst_edges;

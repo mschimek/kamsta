@@ -64,69 +64,97 @@ struct VertexRange_ {
 };
 
 struct WEdge {
-  VId src;
-  VId dst;
-  Weight weight;
+  VId src_;
+  VId dst_;
+  Weight weight_;
   WEdge() = default;
-  WEdge(VId src, VId dst, Weight weight) : src{src}, dst{dst}, weight{weight} {}
-  Weight get_weight() const { return weight; }
-  void set_weight(Weight w) { weight = w; }
-  VId get_src() const { return src; }
-  void set_src(VId src) { this->src = src; }
-  VId get_dst() const { return dst; }
-  void set_dst(VId dst) { this->dst = dst; }
+  WEdge(VId src, VId dst, Weight weight)
+      : src_{src}, dst_{dst}, weight_{weight} {}
+  Weight get_weight() const { return weight_; }
+  void set_weight(Weight w) { weight_ = w; }
+  VId get_src() const { return src_; }
+  void set_src(VId src) { src_ = src; }
+  VId get_dst() const { return dst_; }
+  void set_dst(VId dst) { dst_ = dst; }
 
   friend std::ostream& operator<<(std::ostream& out, const WEdge& edge) {
-    return out << "(" << edge.src << ", " << edge.dst << ", " << edge.weight
+    return out << "(" << edge.src_ << ", " << edge.dst_ << ", " << edge.weight_
                << ")";
   }
 };
 
 struct WEdgeId {
-  VId src;
-  VId dst;
-  Weight weight;
-  GlobalEdgeId global_id;
-  Weight get_weight() const { return weight; }
-  void set_weight(Weight w) { weight = w; }
-  VId get_src() const { return src; }
-  void set_src(VId src) { this->src = src; }
-  VId get_dst() const { return dst; }
-  void set_dst(VId dst) { this->dst = dst; }
-  GlobalEdgeId get_global_id() const { return global_id; }
-  void set_edge_id(uint64_t id) {
-    global_id = id;
+  VId src_;
+  VId dst_;
+  Weight weight_;
+  GlobalEdgeId global_id_;
+  Weight get_weight() const { return weight_; }
+  VId get_src() const { return src_; }
+  void set_src(VId src) { src_ = src; }
+  VId get_dst() const { return dst_; }
+  void set_dst(VId dst) { dst_ = dst; }
+  GlobalEdgeId get_global_id() const { return global_id_; }
+  void set_weight_and_edge_id(uint64_t weight, uint64_t id) {
+    weight_ = weight;
+    global_id_ = id;
   }
-  std::uint64_t get_edge_id() const {
-    return global_id;
-  }
+  std::uint64_t get_edge_id() const { return global_id_; }
 
   WEdgeId() = default;
   WEdgeId(VId src, VId dst, Weight weight, GlobalEdgeId global_id)
-      : src{src}, dst{dst}, weight{weight}, global_id{global_id} {}
+      : src_{src}, dst_{dst}, weight_{weight}, global_id_{global_id} {}
   WEdgeId(const WEdge& edge, GlobalEdgeId global_id)
-      : src{edge.src}, dst{edge.dst}, weight{edge.weight}, global_id{
-                                                               global_id} {}
+      : src_{edge.get_src()}, dst_{edge.get_dst()}, weight_{edge.get_weight()},
+        global_id_{global_id} {}
 
   friend std::ostream& operator<<(std::ostream& out, const WEdgeId& edge) {
-    return out << "(" << edge.src << ", " << edge.dst << ", " << edge.weight
-               << ", " << edge.global_id << ")";
+    return out << "(" << edge.get_src() << ", " << edge.get_dst() << ", "
+               << edge.get_weight() << ", " << edge.get_global_id() << ")";
   }
 };
 
 inline bool operator<(const WEdge& lhs, const WEdge& rhs) {
-  return std::tie(lhs.src, lhs.dst, lhs.weight) <
-         std::tie(rhs.src, rhs.dst, rhs.weight);
+  return std::tie(lhs.src_, lhs.dst_, lhs.weight_) <
+         std::tie(rhs.src_, rhs.dst_, rhs.weight_);
 }
 inline bool operator==(const WEdge& lhs, const WEdge& rhs) {
-  return std::tie(lhs.src, lhs.dst, lhs.weight) ==
-         std::tie(rhs.src, rhs.dst, rhs.weight);
+  return std::tie(lhs.src_, lhs.dst_, lhs.weight_) ==
+         std::tie(rhs.src_, rhs.dst_, rhs.weight_);
 }
 inline bool operator<(const WEdgeId& lhs, const WEdgeId& rhs) {
-  return std::tie(lhs.src, lhs.dst, lhs.weight, lhs.global_id) <
-         std::tie(rhs.src, rhs.dst, rhs.weight, rhs.global_id);
+  return std::tie(lhs.src_, lhs.dst_, lhs.weight_, lhs.global_id_) <
+         std::tie(rhs.src_, rhs.dst_, rhs.weight_, rhs.global_id_);
 }
-inline bool operator<(const WEdgeId16& lhs, const WEdgeId16& rhs) {
+
+template <typename EdgeType>
+inline bool is_equal(const EdgeType& lhs, const EdgeType& rhs) {
+  const auto& lhs_src = lhs.get_src();
+  const auto& lhs_dst = lhs.get_dst();
+  const auto& lhs_weight = lhs.get_weight();
+  const auto& rhs_src = rhs.get_src();
+  const auto& rhs_dst = rhs.get_dst();
+  const auto& rhs_weight = rhs.get_weight();
+  return std::tie(lhs_src, lhs_dst, lhs_weight) ==
+         std::tie(rhs_src, rhs_dst, rhs_weight);
+}
+
+inline bool operator==(const WEdge_4_1& lhs, const WEdge_4_1& rhs) {
+  return is_equal(lhs, rhs);
+}
+
+inline bool operator==(const WEdge_5_1& lhs, const WEdge_5_1& rhs) {
+  return is_equal(lhs, rhs);
+}
+
+inline bool operator==(const WEdge_6_1& lhs, const WEdge_6_1& rhs) {
+  return is_equal(lhs, rhs);
+}
+
+inline bool operator==(const WEdge_4_4& lhs, const WEdge_4_4& rhs) {
+  return is_equal(lhs, rhs);
+}
+
+inline bool operator<(const WEdgeId_4_1_7& lhs, const WEdgeId_4_1_7& rhs) {
   const auto& lhs_src = lhs.get_src();
   const auto& lhs_dst = lhs.get_dst();
   const auto& lhs_weight = lhs.get_weight();
@@ -138,7 +166,7 @@ inline bool operator<(const WEdgeId16& lhs, const WEdgeId16& rhs) {
   return std::tie(lhs_src, lhs_dst, lhs_weight, lhs_id) <
          std::tie(rhs_src, rhs_dst, rhs_weight, rhs_id);
 }
-inline bool operator==(const WEdgeId16& lhs, const WEdgeId16& rhs) {
+inline bool operator==(const WEdgeId_4_1_7& lhs, const WEdgeId_4_1_7& rhs) {
   const auto& lhs_src = lhs.get_src();
   const auto& lhs_dst = lhs.get_dst();
   const auto& lhs_weight = lhs.get_weight();
@@ -150,7 +178,7 @@ inline bool operator==(const WEdgeId16& lhs, const WEdgeId16& rhs) {
   return std::tie(lhs_src, lhs_dst, lhs_weight, lhs_id) ==
          std::tie(rhs_src, rhs_dst, rhs_weight, rhs_id);
 }
-inline bool operator<(const WEdgeId20& lhs, const WEdgeId20& rhs) {
+inline bool operator<(const WEdgeId_6_1_7& lhs, const WEdgeId_6_1_7& rhs) {
   const auto& lhs_src = lhs.get_src();
   const auto& lhs_dst = lhs.get_dst();
   const auto& lhs_weight = lhs.get_weight();
@@ -162,7 +190,7 @@ inline bool operator<(const WEdgeId20& lhs, const WEdgeId20& rhs) {
   return std::tie(lhs_src, lhs_dst, lhs_weight, lhs_id) <
          std::tie(rhs_src, rhs_dst, rhs_weight, rhs_id);
 }
-inline bool operator==(const WEdgeId20& lhs, const WEdgeId20& rhs) {
+inline bool operator==(const WEdgeId_6_1_7& lhs, const WEdgeId_6_1_7& rhs) {
   const auto& lhs_src = lhs.get_src();
   const auto& lhs_dst = lhs.get_dst();
   const auto& lhs_weight = lhs.get_weight();
@@ -174,63 +202,90 @@ inline bool operator==(const WEdgeId20& lhs, const WEdgeId20& rhs) {
   return std::tie(lhs_src, lhs_dst, lhs_weight, lhs_id) ==
          std::tie(rhs_src, rhs_dst, rhs_weight, rhs_id);
 }
+inline bool operator<(const WEdgeId_4_4_8& lhs, const WEdgeId_4_4_8& rhs) {
+  const auto& lhs_src = lhs.get_src();
+  const auto& lhs_dst = lhs.get_dst();
+  const auto& lhs_weight = lhs.get_weight();
+  const auto& lhs_id = lhs.get_edge_id();
+  const auto& rhs_src = rhs.get_src();
+  const auto& rhs_dst = rhs.get_dst();
+  const auto& rhs_weight = rhs.get_weight();
+  const auto& rhs_id = rhs.get_edge_id();
+  return std::tie(lhs_src, lhs_dst, lhs_weight, lhs_id) <
+         std::tie(rhs_src, rhs_dst, rhs_weight, rhs_id);
+}
+inline bool operator==(const WEdgeId_4_4_8& lhs, const WEdgeId_4_4_8& rhs) {
+  const auto& lhs_src = lhs.get_src();
+  const auto& lhs_dst = lhs.get_dst();
+  const auto& lhs_weight = lhs.get_weight();
+  const auto& lhs_id = lhs.get_edge_id();
+  const auto& rhs_src = rhs.get_src();
+  const auto& rhs_dst = rhs.get_dst();
+  const auto& rhs_weight = rhs.get_weight();
+  const auto& rhs_id = rhs.get_edge_id();
+  return std::tie(lhs_src, lhs_dst, lhs_weight, lhs_id) ==
+         std::tie(rhs_src, rhs_dst, rhs_weight, rhs_id);
+}
+
 inline bool operator==(const WEdgeId& lhs, const WEdgeId& rhs) {
-  return std::tie(lhs.src, lhs.dst, lhs.weight, lhs.global_id) ==
-         std::tie(rhs.src, rhs.dst, rhs.weight, rhs.global_id);
+  return std::tie(lhs.src_, lhs.dst_, lhs.weight_, lhs.global_id_) ==
+         std::tie(rhs.src_, rhs.dst_, rhs.weight_, rhs.global_id_);
 }
 
 struct Edge {
-  VId src;
-  VId dst;
-  VId get_src() const { return src; }
-  void set_src(VId src) { this->src = src; }
-  VId get_dst() const { return dst; }
-  void set_dst(VId dst) { this->dst = dst; }
+  VId src_;
+  VId dst_;
+  VId get_src() const { return src_; }
+  void set_src(VId src) { src_ = src; }
+  VId get_dst() const { return dst_; }
+  void set_dst(VId dst) { dst_ = dst; }
   Edge() = default;
-  Edge(uint64_t src, uint64_t dst) : src{src}, dst{dst} {}
+  Edge(uint64_t src, uint64_t dst) : src_{src}, dst_{dst} {}
   friend std::ostream& operator<<(std::ostream& out, const Edge& edge) {
-    return out << "(" << edge.src << ", " << edge.dst << ")";
+    return out << "(" << edge.get_src() << ", " << edge.get_dst() << ")";
   }
 };
 
 inline bool operator<(const Edge& lhs, const Edge& rhs) {
-  return std::tie(lhs.src, lhs.dst) < std::tie(rhs.src, rhs.dst);
+  return std::tie(lhs.src_, lhs.dst_) < std::tie(rhs.src_, rhs.dst_);
 }
 inline bool operator==(const Edge& lhs, const Edge& rhs) {
-  return std::tie(lhs.src, lhs.dst) == std::tie(rhs.src, rhs.dst);
+  return std::tie(lhs.src_, lhs.dst_) == std::tie(rhs.src_, rhs.dst_);
 }
 using WEdgeList = std::vector<WEdge>;
-using WEdgeList14 = std::vector<WEdge14>;
+using WEdgeList14 = std::vector<WEdge_6_1>;
 using EdgeList =
     std::vector<std::pair<long long unsigned int, long long unsigned int>>;
-//template <typename EdgeType> inline VId src(const EdgeType& edge) {
-//  return edge.src;
-//}
-//template <typename EdgeType> inline VId& src_ref(EdgeType& edge) {
-//  return edge.src;
-//}
-//template <typename EdgeType> inline const VId& src_ref(const EdgeType& edge) {
-//  return edge.src;
-//}
-//template <typename EdgeType> inline VId dst(const EdgeType& edge) {
-//  return edge.dst;
-//}
-//template <typename EdgeType> inline VId& dst_ref(EdgeType& edge) {
-//  return edge.dst;
-//}
-//template <typename EdgeType> inline const VId& dst_ref(const EdgeType& edge) {
-//  return edge.dst;
-//}
-//template <typename EdgeType> Weight weight(const EdgeType& edge) {
-//  return edge.weight;
-//}
-//template <typename EdgeType>
-//inline const Weight& weight_ref(const EdgeType& edge) {
-//  return edge.weight;
-//}
-//template <typename EdgeType> inline Weight& weight_ref(EdgeType& edge) {
-//  return edge.weight;
-//}
+// template <typename EdgeType> inline VId src(const EdgeType& edge) {
+//   return edge.src;
+// }
+// template <typename EdgeType> inline VId& src_ref(EdgeType& edge) {
+//   return edge.src;
+// }
+// template <typename EdgeType> inline const VId& src_ref(const EdgeType& edge)
+// {
+//   return edge.src;
+// }
+// template <typename EdgeType> inline VId dst(const EdgeType& edge) {
+//   return edge.dst;
+// }
+// template <typename EdgeType> inline VId& dst_ref(EdgeType& edge) {
+//   return edge.dst;
+// }
+// template <typename EdgeType> inline const VId& dst_ref(const EdgeType& edge)
+// {
+//   return edge.dst;
+// }
+// template <typename EdgeType> Weight weight(const EdgeType& edge) {
+//   return edge.weight;
+// }
+// template <typename EdgeType>
+// inline const Weight& weight_ref(const EdgeType& edge) {
+//   return edge.weight;
+// }
+// template <typename EdgeType> inline Weight& weight_ref(EdgeType& edge) {
+//   return edge.weight;
+// }
 
 struct EdgeIdWeight {
   LocalEdgeId edge_id;

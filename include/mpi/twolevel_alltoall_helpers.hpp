@@ -9,31 +9,26 @@
 #include "mpi/context.hpp"
 
 namespace hybridMST::mpi {
-template <typename Payload_> struct Message {
+template <typename Payload_> class Message {
+public:
   using Payload = Payload_;
   Message() {}
 
-  Message(Payload_ payload_) : sender_receiver{0u}, payload{payload_} {}
+  Message(Payload_ payload) : sender_{0u}, receiver_{0u}, payload_{payload} {}
 
-  Message(std::uint32_t sender_receiver_, Payload_ payload_)
-      : sender_receiver{sender_receiver_}, payload{payload_} {}
+  Message(std::uint32_t sender, std::uint32_t receiver, Payload_ payload)
+      : sender_{sender}, receiver_{receiver}, payload_{payload} {}
 
-  void set_sender(std::uint32_t sender) {
-    sender = sender << offset;
-    sender_receiver |= sender;
-  }
+  void set_sender(std::uint32_t sender) { sender_ = sender; }
 
-  void set_receiver(std::uint32_t receiver) { sender_receiver |= receiver; }
+  void set_receiver(std::uint32_t receiver) { receiver_ = receiver; }
 
-  [[nodiscard]] std::uint32_t get_sender() const {
-    return sender_receiver >> offset;
-  }
+  [[nodiscard]] std::uint32_t get_sender() const { return sender_; }
 
-  [[nodiscard]] std::uint32_t get_receiver() const {
-    constexpr std::uint32_t ones = ~std::uint32_t{0};
-    constexpr std::uint32_t lower_half = ones >> offset;
-    return sender_receiver & lower_half;
-  }
+  [[nodiscard]] std::uint32_t get_receiver() const { return receiver_; }
+  void swap_sender_and_receiver() { std::swap(sender_, receiver_); }
+
+  const Payload& payload() const { return payload_; }
 
   friend std::ostream& operator<<(std::ostream& out,
                                   const Message<Payload_>& msg) {
@@ -41,8 +36,10 @@ template <typename Payload_> struct Message {
                << msg.payload << ")";
   }
 
-  std::uint32_t sender_receiver; // [sender,receiver]
-  Payload payload;
+private:
+  std::uint32_t sender_;
+  std::uint32_t receiver_;
+  Payload payload_;
   static constexpr std::uint32_t offset = 16u;
 };
 
@@ -50,12 +47,18 @@ class TwoLevelCommunicator {
 public:
   TwoLevelCommunicator(int rank, int size, MPI_Comm comm) {
     const double sqrt = std::sqrt(size);
-    floor_sqrt = std::floor(sqrt);
-    const bool is_square = static_cast<int>(floor_sqrt * floor_sqrt) == size;
-    int row_num = rank / floor_sqrt;
-    int column_num = rank % floor_sqrt;
-    if (!is_square && rank >= (floor_sqrt * floor_sqrt)) {
-      row_num = rank % floor_sqrt; // virtual group
+    const std::size_t floor_sqrt = std::floor(sqrt);
+    const std::size_t ceil_sqrt = std::ceil(sqrt);
+    // if size exceeds the threshold we can afford one more column
+    const std::size_t threshold = floor_sqrt * ceil_sqrt;
+    number_columns_ =
+        (static_cast<std::size_t>(size) < threshold) ? floor_sqrt : ceil_sqrt;
+    const std::size_t num_pe_in_small_column = size / number_columns_;
+    int row_num = rank / number_columns_;
+    int column_num = rank % number_columns_;
+    if (static_cast<std::size_t>(rank) >=
+        (number_columns_ * num_pe_in_small_column)) {
+      row_num = rank % number_columns_; // virtual group
     }
     MPI_Comm_split(comm, row_num, rank, &row_comm);
     MPI_Comm_split(comm, column_num, rank, &column_comm);
@@ -63,10 +66,10 @@ public:
     column_ctx = MPIContext(column_comm);
   }
   [[nodiscard]] int row_index(int destination_rank) const {
-    return destination_rank / floor_sqrt;
+    return destination_rank / number_columns_;
   }
   [[nodiscard]] int col_index(int destination_rank) const {
-    return destination_rank % floor_sqrt;
+    return destination_rank % number_columns_;
   }
   [[nodiscard]] MPIContext get_row_ctx() const { return row_ctx; }
   [[nodiscard]] MPIContext get_col_ctx() const { return column_ctx; }
@@ -76,7 +79,7 @@ public:
   }
 
 private:
-  std::size_t floor_sqrt;
+  std::size_t number_columns_;
   MPI_Comm row_comm;
   MPI_Comm column_comm;
   MPIContext row_ctx;

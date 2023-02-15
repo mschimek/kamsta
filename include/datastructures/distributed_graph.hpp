@@ -22,7 +22,7 @@ namespace hybridMST {
 template <bool compactify_internal>
 struct DistributedGraph_CompactificationData {
   template <typename Edges>
-  DistributedGraph_CompactificationData(const Edges& edges, int round)
+  DistributedGraph_CompactificationData(const Edges& edges, std::size_t round)
       : compactified_vertices{LocalVertexCompactification::execute(edges,
                                                                    round)},
         global_id_to_local_id(compactified_vertices.size() * 1.25),
@@ -40,7 +40,8 @@ struct DistributedGraph_CompactificationData {
 };
 template <> struct DistributedGraph_CompactificationData<false> {
   template <typename Edges>
-  DistributedGraph_CompactificationData(const Edges& /*edges*/, int round) {}
+  DistributedGraph_CompactificationData(const Edges& /*edges*/,
+                                        std::size_t /*round*/) {}
 };
 
 class LocatorWrapper {
@@ -53,10 +54,9 @@ public:
       : use_sparse_locator_{use_sparse_vertex_locator(edges.size())} {
     if (use_sparse_locator_) {
       non_init_vector<Edge> flipped_edges(edges.size());
-#pragma omp parallel for
-      for (std::size_t i = 0; i < edges.size(); ++i) {
+      parallel_for(0, edges.size(), [&](std::size_t i) {
         flipped_edges[i] = Edge{edges[i].get_dst(), edges[i].get_src()};
-      }
+      });
       sparse_vertex_locator.init(min_edge, max_edge, flipped_edges);
     } else {
       dense_vertex_locator = VertexLocator_Split(min_edge, max_edge);
@@ -86,14 +86,17 @@ public:
       return res_dense;
     }
   }
-  [[nodiscard]] PEID get_min_pe_or_sentinel(const Edge& edge, PEID sentinel = -1) const {
+  [[nodiscard]] PEID get_min_pe_or_sentinel(const Edge& edge,
+                                            PEID sentinel = -1) const {
     if constexpr (!enable_debug) {
       if (use_sparse_locator_)
         return sparse_vertex_locator.get_min_pe_or_sentinel(edge, sentinel);
       return dense_vertex_locator.get_min_pe_or_sentinel(edge, sentinel);
     } else {
-      auto res_sparse = sparse_vertex_locator.get_min_pe_or_sentinel(edge, sentinel);
-      auto res_dense = dense_vertex_locator.get_min_pe_or_sentinel(edge, sentinel);
+      auto res_sparse =
+          sparse_vertex_locator.get_min_pe_or_sentinel(edge, sentinel);
+      auto res_dense =
+          dense_vertex_locator.get_min_pe_or_sentinel(edge, sentinel);
       check(res_sparse, res_dense, "get_min_edge", edge);
       return res_dense;
     }
@@ -219,7 +222,6 @@ public:
   template <typename T> using container = non_init_vector<T>;
   DistributedGraph(non_init_vector<EdgeType_>& edges, std::size_t round)
       : compactification_data{edges, round}, _edges{edges} {
-    mpi::MPIContext ctx;
     get_timer().start("graph_internal_init_setup", round);
     REORDERING_BARRIER
     Edge unweighted_min_edge = Edge{VID_UNDEFINED, VID_UNDEFINED};
@@ -296,7 +298,6 @@ public:
 
 private:
   DistributedGraph_CompactificationData<compactify> compactification_data;
-  mpi::MPIContext ctx;
   container<EdgeType>& _edges;
   VertexRange _v_range;
   LocatorWrapper locator_;

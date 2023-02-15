@@ -8,6 +8,7 @@
 #include <util/utils.hpp>
 
 namespace hybridMST {
+  // TODO rework all this to make it independent from power of two
 namespace mpi {
 ///@brief Construct MPI communicator in a grid based on the given input
 /// communicator.
@@ -41,7 +42,8 @@ private:
     std::size_t log_size = std::log2(size);
     std::size_t num_columns = 1ull << (log_size / 2);
     num_pe_per_column = size / num_columns;
-    const bool is_num_pe_power_of_two = (1ull << log_size) == size;
+    [[maybe_unused]] const bool is_num_pe_power_of_two =
+        (1ull << log_size) == static_cast<std::size_t>(size);
 
     assert(is_num_pe_power_of_two);
 

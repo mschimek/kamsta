@@ -5,8 +5,8 @@ std::chrono::high_resolution_clock::time_point now() {
   return std::chrono::high_resolution_clock::now();
 }
 std::vector<char> StandardKey::serialize() const {
-  std::size_t size = id.size();
-  const std::size_t necessary_size = sizeof(size) + size + sizeof(count);
+  std::size_t size = id_.size();
+  const std::size_t necessary_size = sizeof(size) + size + sizeof(count_);
   std::vector<char> serialization(necessary_size);
   std::size_t offset = 0;
   if (serialization.size() < sizeof(size)) {
@@ -15,9 +15,9 @@ std::vector<char> StandardKey::serialize() const {
   }
   std::memcpy(serialization.data(), &size, sizeof(size));
   offset += sizeof(size);
-  std::memcpy(serialization.data() + offset, id.data(), id.size());
-  offset += id.size();
-  std::memcpy(serialization.data() + offset, &count, sizeof(count));
+  std::memcpy(serialization.data() + offset, id_.data(), id_.size());
+  offset += id_.size();
+  std::memcpy(serialization.data() + offset, &count_, sizeof(count_));
   return serialization;
 }
 StandardKey deserialize(const char* buf) {
@@ -25,11 +25,11 @@ StandardKey deserialize(const char* buf) {
   std::memcpy(&length, buf, sizeof(length));
   StandardKey key{std::string(length, '0'), 0};
   std::size_t offset = sizeof(length);
-  for (char& c : key.id) {
+  for (char& c : key.id_) {
     std::memcpy(&c, buf + offset, 1);
     ++offset;
   }
-  std::memcpy(&key.count, buf + offset, sizeof(key.count));
+  std::memcpy(&key.count_, buf + offset, sizeof(key.count_));
   return key;
 }
 std::vector<char> serialize(std::vector<StandardKey>& keys) {
@@ -48,13 +48,13 @@ std::vector<StandardKey> deserialize(std::vector<char>& serialization) {
   do {
     const StandardKey key = deserialize(serialization.data() + offset);
     keys.push_back(key);
-    offset += sizeof(std::size_t) + key.id.size() + sizeof(key.count);
+    offset += sizeof(std::size_t) + key.id_.size() + sizeof(key.count_);
   } while (offset < serialization.size());
   return keys;
 }
 
 bool operator<(const StandardKey& lhs, const StandardKey& rhs) {
-  return std::tie(lhs.id, lhs.count) < std::tie(rhs.id, rhs.count);
+  return std::tie(lhs.id_, lhs.count_) < std::tie(rhs.id_, rhs.count_);
 }
 
 std::string Timer::get_string(const Timer::DatapointsOperation& op) const {
@@ -85,7 +85,8 @@ void Timer::reset() {
   keyToData.clear();
   phase_to_counters.clear();
   active_phase = default_phase;
-};
+}
+
 void Timer::start(const typename Key::Id& key_id,
                   const typename Key::Count& count) {
   asm volatile("" ::: "memory");

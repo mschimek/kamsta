@@ -34,9 +34,9 @@ public:
   }
   // get owner of edge (src, dst, ...)
   PEID get_pe(const VId& src, const VId& dst) const {
-    Edge edge{src, dst}; // TODO fix with std::tie-ish or something
+    Edge edge_to_find{src, dst}; // TODO fix with std::tie-ish or something
     auto find_it =
-        std::lower_bound(max_edges.begin(), max_edges.end(), edge,
+        std::lower_bound(max_edges.begin(), max_edges.end(), edge_to_find,
                          [&](const MaxEdgePe& max_edge, const Edge& edge) {
                            return max_edge.edge < edge;
                          });
@@ -50,15 +50,15 @@ private:
 
 struct VertexLocator_Split {
   struct EdgeInterval {
-    Edge min_edge;
-    Edge max_edge;
+    Edge min_edge_;
+    Edge max_edge_;
     EdgeInterval() = default;
     EdgeInterval(Edge min_edge, Edge max_edge)
-        : min_edge(min_edge), max_edge(max_edge) {}
-    bool is_empty() const { return !is_defined(min_edge.get_src()); }
+        : min_edge_(min_edge), max_edge_(max_edge) {}
+    bool is_empty() const { return !is_defined(min_edge_.get_src()); }
     friend std::ostream& operator<<(std::ostream& out,
                                     const EdgeInterval& interval) {
-      return out << "[" << interval.min_edge << " - " << interval.max_edge
+      return out << "[" << interval.min_edge_ << " - " << interval.max_edge_
                  << "]";
     }
   };
@@ -94,27 +94,33 @@ struct VertexLocator_Split {
   std::size_t get_n() const { return has_edges() ? v_max - v_min + 1 : 0ull; }
   VId local_id(VId global_id) const { return global_id - v_min; }
   bool is_local(VId v) const { return v_min <= v && v <= v_max; }
-  VId get_v_max(PEID pe) const { return org_edge_limits_[pe].max_edge.get_src(); }
-  VId get_v_min(PEID pe) const { return org_edge_limits_[pe].min_edge.get_src(); }
+  VId get_v_max(PEID pe) const {
+    return org_edge_limits_[pe].max_edge_.get_src();
+  }
+  VId get_v_min(PEID pe) const {
+    return org_edge_limits_[pe].min_edge_.get_src();
+  }
   bool is_vertex_split(VId v) const { return get_min_pe(v) != get_max_pe(v); }
 
   PEID get_min_pe(const Edge& edge) const {
-    const auto it = std::lower_bound(
-        edge_limits_.begin(), edge_limits_.end(), edge,
-        [](const std::pair<EdgeInterval, int>& interval, const Edge& edge) {
-          return interval.first.max_edge < edge;
-        });
+    const auto it =
+        std::lower_bound(edge_limits_.begin(), edge_limits_.end(), edge,
+                         [](const std::pair<EdgeInterval, int>& interval,
+                            const Edge& edge_internal) {
+                           return interval.first.max_edge_ < edge_internal;
+                         });
     // MPI_ASSERT_(it != edge_limits_.end(), "");
     const PEID pe = it->second;
     return pe;
   }
 
   PEID get_min_pe_or_sentinel(const Edge& edge, PEID sentinel = -1) const {
-    const auto it = std::lower_bound(
-        edge_limits_.begin(), edge_limits_.end(), edge,
-        [](const std::pair<EdgeInterval, int>& interval, const Edge& edge) {
-          return interval.first.max_edge < edge;
-        });
+    const auto it =
+        std::lower_bound(edge_limits_.begin(), edge_limits_.end(), edge,
+                         [](const std::pair<EdgeInterval, int>& interval,
+                            const Edge& comp_arg_edge) {
+                           return interval.first.max_edge_ < comp_arg_edge;
+                         });
     const PEID pe = it != edge_limits_.end() ? it->second : sentinel;
     return pe;
   }
@@ -122,11 +128,12 @@ struct VertexLocator_Split {
   PEID get_min_pe(const VId& v) const { return get_min_pe(Edge{v, 0}); }
 
   PEID get_max_pe(const Edge& edge) const {
-    const auto it = std::upper_bound(
-        edge_limits_.begin(), edge_limits_.end(), edge,
-        [](const Edge& edge, const std::pair<EdgeInterval, int>& interval) {
-          return edge < interval.first.min_edge;
-        });
+    const auto it =
+        std::upper_bound(edge_limits_.begin(), edge_limits_.end(), edge,
+                         [](const Edge& edge_comp_arg,
+                            const std::pair<EdgeInterval, int>& interval) {
+                           return edge_comp_arg < interval.first.min_edge_;
+                         });
     const auto prev_it = std::prev(it, 1);
     return prev_it->second;
   }
@@ -188,7 +195,6 @@ inline std::pair<VId, VId> find_min_max(const execution::parallel& /*policy*/,
   if (edges.empty())
     return std::make_pair(min_idx, max_idx);
   min_idx = max_idx = 0;
-  using MinMax = std::pair<VId, VId>;
   auto comp = SrcDstWeightOrder<EdgeType>{};
   auto [min_it, max_it] = parlay::minmax_element(
       edges,
@@ -242,11 +248,10 @@ struct CompactifyVerticesTrivial {
     parlay::hashtable<parlay::hash_numeric<VId>> table(
         edges.size(), parlay::hash_numeric<VId>{});
 
-#pragma omp parallel for
-    for (std::size_t i = 0; i < edges.size(); ++i) {
+    parallel_for(0, edges.size(), [&](std::size_t i) {
       const auto& elem = edges[i];
       table.insert(elem.get_src());
-    }
+    });
     auto local_vertices = table.entries();
     ips4o::parallel::sort(local_vertices.begin(), local_vertices.end());
     std::unordered_map<VId, VId> map;
@@ -256,12 +261,11 @@ struct CompactifyVerticesTrivial {
       auto [it, is_inserted] = map.emplace(v, counter);
       counter += is_inserted;
     }
-#pragma omp parallel for
-    for (std::size_t i = 0; i < local_vertices.size(); ++i) {
+    paralle_for(0, local_vertices.size(), [&](std::size_t i) {
       auto local_vertex = local_vertices[i];
       auto it = map.find(local_vertex);
       local_id_to_global_ids[it->second] = it->first;
-    }
+    });
     return map;
   }
 };
@@ -279,16 +283,19 @@ struct LocalVertexCompactification {
   static auto execute(const std::vector<T, Args...>& edges, int round) {
 
     get_timer().start("graph_internal_local_vertex_compact", round);
-    const auto max_num_local_vertices = get_max_num_local_vertices(edges);
-    const std::size_t table_size = 2*(edges.size() + 10);//std::max(10000ull, (max_num_local_vertices + 100ul) * 2);
+    // const auto max_num_local_vertices = get_max_num_local_vertices(edges);
+    // TODO check why the above approach leads to very high running times
+    // although place should be sufficient
+    const std::size_t table_size =
+        2 * (edges.size() +
+             10); // std::max(10000ull, (max_num_local_vertices + 100ul) * 2);
     parlay::hashtable<parlay::hash_numeric<VId>> table(
         table_size, parlay::hash_numeric<VId>{});
 
-#pragma omp parallel for
-    for (std::size_t i = 0; i < edges.size(); ++i) {
+    parallel_for(0, edges.size(), [&](std::size_t i) {
       const auto& elem = edges[i];
       table.insert(elem.get_src());
-    }
+    });
     auto local_vertices = table.entries();
     if (local_vertices.size() <= 1) {
       get_timer().stop("graph_internal_local_vertex_compact", round);
@@ -316,16 +323,16 @@ struct CompactifyVerticesParallel {
                       non_init_vector<VId>& local_id_to_global_ids, int round) {
 
     get_timer().start("graph_internal_local_vertex_compact_mapping", round);
-#pragma omp parallel for
-    for (std::size_t i = 0; i < compact_vertices.size(); ++i) {
+    parallel_for(0, compact_vertices.size(), [&](std::size_t i) {
       const auto& v = compact_vertices[i];
       local_id_to_global_ids[i] = v;
       auto [it, is_inserted] = map.insert(v + 1, i);
+      (void)it;
       // if (it == map.end()) {
       //   std::cout << "wrong growt insertion" << std::endl;
       //   std::abort();
       // }
-    }
+    });
     get_timer().stop("graph_internal_local_vertex_compact_mapping", round);
   }
 };

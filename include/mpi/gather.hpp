@@ -5,9 +5,8 @@
 #include <vector>
 
 #include "context.hpp"
-#include "grid_communicators.hpp"
 #include "mpi/context.hpp"
-#include "mpi/grid_communicators.hpp"
+#include "mpi/twolevel_columnmajor_communicator.hpp"
 #include "mpi/type_handling.hpp"
 #include "type_handling.hpp"
 #include "util/communication_volume_measurements.hpp"
@@ -43,9 +42,11 @@ inline void gatherv(DataType* send_data, int32_t send_count, int32_t target,
 
   TypeMapper<DataType> tm;
   {
-    const std::size_t recv_bytes = ctx.rank() == target ?
-        std::accumulate(receiving_sizes.begin(), receiving_sizes.end(), 0ull) *
-        sizeof(DataType) : 0;
+    const std::size_t recv_bytes =
+        ctx.rank() == target ? std::accumulate(receiving_sizes.begin(),
+                                               receiving_sizes.end(), 0ull) *
+                                   sizeof(DataType)
+                             : 0;
     const std::size_t sent_bytes = send_count * sizeof(DataType);
     get_communication_tracker().add_volume(sent_bytes, recv_bytes);
   }
@@ -70,9 +71,11 @@ gatherv(DataType* send_data, int32_t send_count, int32_t target,
       receiving_offsets.back() + receiving_sizes.back();
   std::vector<DataType_, Allocator<DataType_>> recv_buffer(sum_sizes);
   {
-    const std::size_t recv_bytes = target == ctx.rank() ?
-        std::accumulate(receiving_sizes.begin(), receiving_sizes.end(), 0ull) *
-        sizeof(DataType) : 0;
+    const std::size_t recv_bytes =
+        target == ctx.rank() ? std::accumulate(receiving_sizes.begin(),
+                                               receiving_sizes.end(), 0ull) *
+                                   sizeof(DataType)
+                             : 0;
     const std::size_t sent_bytes = send_count * sizeof(DataType);
     get_communication_tracker().add_volume(sent_bytes, recv_bytes);
   }
@@ -99,9 +102,11 @@ Container gatherv(const Container& send_data, int32_t target,
       receiving_offsets.back() + receiving_sizes.back();
   Container recv_buffer(sum_sizes);
   {
-    const std::size_t recv_bytes = ctx.rank() == target ?
-        std::accumulate(receiving_sizes.begin(), receiving_sizes.end(), 0ull) *
-        sizeof(DataType) : 0;
+    const std::size_t recv_bytes =
+        ctx.rank() == target ? std::accumulate(receiving_sizes.begin(),
+                                               receiving_sizes.end(), 0ull) *
+                                   sizeof(DataType)
+                             : 0;
     const std::size_t sent_bytes = send_data.size() * sizeof(DataType);
     get_communication_tracker().add_volume(sent_bytes, recv_bytes);
   }
@@ -115,20 +120,22 @@ Container gatherv(const Container& send_data, int32_t target,
 namespace two_level {
 template <typename Container>
 inline Container gatherv(Container& data, int32_t root) {
-  using DataType = std::remove_cv_t<typename Container::value_type>;
-
-  const auto& grid = get_power_two_grid_communicators();
-  const int32_t root_in_column_comm = grid.column_id(root);
-  const int32_t root_in_row_comm = grid.row_id(root);
+  const auto& twolevel_comm = get_twolevel_columnmajor_communicators();
+  const int32_t root_in_column_comm = twolevel_comm.col_index(root);
+  const int32_t root_in_row_comm = twolevel_comm.row_index(root);
+  if(twolevel_comm.col_size(root) < twolevel_comm.large_col_size()) {
+    PRINT_WARNING("cannot use twolevel gather");
+    return hybridMST::mpi::gatherv(data, root);
+  }
   mpi::MPIContext ctx;
   auto column_wise_data =
-      gatherv(data, root_in_column_comm, grid.get_col_ctx());
-  if (root_in_column_comm != grid.get_col_ctx().rank()) {
-    get_communication_tracker().add_volume(0,0);
-    get_communication_tracker().add_volume(0,0);
+      gatherv(data, root_in_column_comm, twolevel_comm.get_col_ctx());
+  if (root_in_column_comm != twolevel_comm.get_col_ctx().rank()) {
+    get_communication_tracker().add_volume(0, 0);
+    get_communication_tracker().add_volume(0, 0);
     return Container{};
   }
-  return gatherv(column_wise_data, root_in_row_comm, grid.get_row_ctx());
+  return gatherv(column_wise_data, root_in_row_comm, twolevel_comm.get_row_ctx());
 }
 } // namespace two_level
 } // namespace hybridMST::mpi

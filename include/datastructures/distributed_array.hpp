@@ -2,7 +2,7 @@
 
 #include <vector>
 
-//#include "datastructures/concurrent_lookup_map.hpp"
+// #include "datastructures/concurrent_lookup_map.hpp"
 #include "datastructures/growt.hpp"
 #include "definitions.hpp"
 #include "mpi/alltoall_combined.hpp"
@@ -112,11 +112,10 @@ public:
     // Assumption: there is only at most one update request for each vertex.
     MPI_ASSERT(ctx_, are_elements_unique(recv.buffer),
                " elements are not unique");
-#pragma omp parallel for
-    for (std::size_t i = 0; i < recv.buffer.size(); ++i) {
+    parallel_for(0, recv.buffer.size(), [&](std::size_t i) {
       const auto& elem = recv.buffer[i];
       set_value_locally(elem);
-    }
+    });
   }
 
   template <typename InputContainer>
@@ -162,38 +161,37 @@ public:
   }
 
   template <typename InputContainer>
-  non_init_vector<IndexValue> get_values_in_vector_filter(
-      const InputContainer& global_indices) const {
+  non_init_vector<IndexValue>
+  get_values_in_vector_filter(const InputContainer& global_indices) const {
     // assume global indices are already filtered
     mpi::MPIContext ctx;
-    const auto& grid_communicators = mpi::get_power_two_grid_communicators();
+    const auto& twolevel_comm = mpi::get_grid_communicators();
     auto filter = False_Predicate{};
     auto transformer = [](const std::size_t& elem, const std::size_t&) {
       return elem;
     };
     auto dst_computer_request_first_level = [&](const std::size_t& elem,
                                                 const std::size_t&) {
-      return get_pe(elem) / grid_communicators.get_col_ctx().size();
+      return twolevel_comm.col_index(get_pe(elem));
     };
     auto requests_first_level = mpi::twopass_alltoallv_openmp_special(
         global_indices, filter, transformer, dst_computer_request_first_level,
-        grid_communicators.get_row_ctx());
+        twolevel_comm.get_row_ctx());
 
     parlay::hashtable<parlay::hash_numeric<VId>> table(
         requests_first_level.buffer.size(), parlay::hash_numeric<VId>{});
-#pragma omp parallel for
-    for (std::size_t i = 0; i < requests_first_level.buffer.size(); ++i) {
+    parallel_for(0, requests_first_level.buffer.size(), [&](std::size_t i) {
       const auto& idx = requests_first_level.buffer[i];
       table.insert(idx);
-    }
+    });
     auto entries = table.entries();
     auto dst_computer_request_second_level = [&](const std::size_t& elem,
                                                  const std::size_t&) {
-      return get_pe(elem) % grid_communicators.get_col_ctx().size();
+      return twolevel_comm.row_index(get_pe(elem));
     };
     auto requests_second_level = mpi::twopass_alltoallv_openmp_special(
         entries, filter, transformer, dst_computer_request_second_level,
-        grid_communicators.get_col_ctx());
+        twolevel_comm.get_col_ctx());
 
     auto transformer_reply = [&](const std::size_t& elem, const std::size_t&) {
       return IndexValue{elem, get_value_locally(elem)};
@@ -203,13 +201,12 @@ public:
     };
     auto reply_second_level = mpi::twopass_alltoallv_openmp_special(
         requests_second_level.buffer, filter, transformer_reply,
-        dst_computer_reply, grid_communicators.get_col_ctx());
+        dst_computer_reply, twolevel_comm.get_col_ctx());
     growt::GlobalVIdMap<T> map(reply_second_level.buffer.size() * 1.25);
-#pragma omp parallel for
-    for (std::size_t i = 0; i < reply_second_level.buffer.size(); ++i) {
+    parallel_for(0, reply_second_level.buffer.size(), [&](std::size_t i) {
       const auto& elem = reply_second_level.buffer[i];
       growt::insert(map, elem.index, elem.value);
-    }
+    });
 
     auto transformer_reply_first_level = [&](const std::size_t& elem,
                                              const std::size_t&) {
@@ -222,11 +219,9 @@ public:
     };
     auto reply_first_level = mpi::twopass_alltoallv_openmp_special(
         requests_first_level.buffer, filter, transformer_reply_first_level,
-        dst_computer_first_level_reply, grid_communicators.get_row_ctx());
+        dst_computer_first_level_reply, twolevel_comm.get_row_ctx());
 
-    return std::move(
-        reply_first_level
-            .buffer); // TODO is move necesary, because of subobject?
+    return std::move(reply_first_level.buffer);
   }
 
   template <typename InputContainer>
@@ -252,11 +247,10 @@ public:
     auto reply = mpi::alltoall_combined(requests.buffer, filter_reply,
                                         transformer_reply, dst_computer_reply);
     growt::GlobalVIdMap<T> map(reply.buffer.size() * 1.25);
-#pragma omp parallel for
-    for (std::size_t i = 0; i < reply.buffer.size(); ++i) {
+    parallel_for(0, reply.buffer.size(), [&](std::size_t i) {
       const auto& elem = reply.buffer[i];
       growt::insert(map, elem.index, elem.value);
-    }
+    });
     return map;
   }
 

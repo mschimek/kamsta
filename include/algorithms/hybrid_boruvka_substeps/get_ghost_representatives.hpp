@@ -97,15 +97,13 @@ struct ExchangeRepresentativesPush_Sort {
 
     get_timer().start("exchange_representatives_filter", round);
     const std::size_t num_tasks = ctx.threads_per_mpi_process();
-    const std::size_t num_vertices = graph.edges().size() / num_tasks;
     non_init_vector<PEID> dst_pe(graph.edges().size());
 
-#pragma omp parallel for
-    for (std::size_t i = 0; i < num_tasks; ++i) {
+    parallel_for(0, num_tasks, [&](std::size_t i) {
       const TaskBeginEnd task =
           compute_task_boundaries(graph.edges().size(), num_tasks, i);
       process_batch_sorting(task, dst_pe, graph.edges(), locator);
-    }
+    });
     get_timer().stop("exchange_representatives_filter", round);
 
     get_timer().start("exchange_representatives_exchange", round);
@@ -127,19 +125,18 @@ struct ExchangeRepresentativesPush_Sort {
 
     get_timer().start("exchange_representatives_allocate_map", round);
     REORDERING_BARRIER
-    growt::GlobalVIdMap<VId> grow_map{rep_info.buffer.size() * 1.1};
+    const std::size_t map_size = rep_info.buffer.size() * 1.1;
+    growt::GlobalVIdMap<VId> grow_map{map_size};
     REORDERING_BARRIER
     get_timer().stop("exchange_representatives_allocate_map", round);
 
     get_timer().start("exchange_representatives_write_map", round);
-    REORDERING_BARRIER
-    {
-#pragma omp parallel for
-      for (std::size_t i = 0; i < rep_info.buffer.size(); ++i) {
+    REORDERING_BARRIER {
+      parallel_for(0, rep_info.buffer.size(), [&](std::size_t i) {
         const auto& elem = rep_info.buffer[i];
         static_assert(sizeof(VId) >= 8);
         grow_map.insert(elem.prev_name + 1, elem.name);
-      }
+      });
     }
     REORDERING_BARRIER
     get_timer().stop("exchange_representatives_write_map", round);
@@ -191,16 +188,16 @@ struct ExchangeRepresentativesPush_Hash {
     parlay::hashtable<parlay::hash_numeric<VId>> table(
         edges.size(), parlay::hash_numeric<VId>{});
 
-#pragma omp parallel for
-    for (std::size_t i = 0; i < edges.size(); ++i) {
+    parallel_for(0, edges.size(), [&](std::size_t i) {
       const auto& cur_edge = edges[i];
       const PEID pe =
           locator.get_min_pe(Edge{cur_edge.get_dst(), cur_edge.get_src()});
-      if (pe == ctx.rank())
-        continue;
+      if (pe == ctx.rank()) {
+        return;
+      }
       const VId combined_entry = combine(pe, cur_edge.get_src());
       table.insert(combined_entry);
-    }
+    });
     return table.entries();
   }
   // assumptions:

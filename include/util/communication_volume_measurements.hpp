@@ -166,7 +166,7 @@ public:
     if (ctx.rank() == 0) {
       for (std::size_t i = 0; i < max_num_keys; ++i) {
         std::vector<SentRecvId> data_from_collective;
-        for (std::size_t j = 0; j < ctx.size(); ++j) {
+        for (std::size_t j = 0; j < static_cast<std::size_t>(ctx.size()); ++j) {
           data_from_collective.push_back(data[i + (max_num_keys * j)]);
         }
         analysis_results.push_back(

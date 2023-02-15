@@ -48,7 +48,7 @@ struct RelabelViaPush {
 
   template <typename T, typename... Args>
   static auto get_src_vertices(const std::vector<T, Args...>& edges,
-                               int threshold_weight, int round) {
+                               Weight threshold_weight) {
     const std::size_t num_local_vertices = get_max_num_local_vertices(edges);
     const std::size_t table_size = get_table_size(num_local_vertices);
     parlay::hashtable<parlay::hash_numeric<VId>> table(
@@ -56,7 +56,7 @@ struct RelabelViaPush {
     parallel_for(0, edges.size(), [&](const std::size_t& i) {
       auto& edge = edges[i];
       if (edge.get_weight() <= threshold_weight) {
-      std::cout << "should not be called " << std::endl;
+        std::cout << "should not be called " << std::endl;
         return;
       }
       table.insert(edge.get_src());
@@ -75,14 +75,15 @@ struct RelabelViaPush {
     constexpr bool compactify_graph = true;
     const auto comp = SrcDstWeightOrder<EdgeType>{};
     if (!edges.empty() &&
-        !parlay::is_sorted(edges,
-                           comp)) { // parlay's is_sorted crashes with empty range
+        !parlay::is_sorted(
+            edges,
+            comp)) { // parlay's is_sorted crashes with empty range
       ips4o::parallel::sort(edges.begin(), edges.end(), comp);
     }
     DistributedGraph<EdgeType, compactify_graph> graph(edges, round);
     get_timer().stop("via_push_relabel_preprocess", round);
     get_timer().start("via_push_relabel_src_vertices", round);
-    const auto src_vertices = get_src_vertices(edges, threshold_weight, round);
+    const auto src_vertices = get_src_vertices(edges, threshold_weight);
     get_timer().stop("via_push_relabel_src_vertices", round);
     get_timer().start("via_push_relabel_get_parents", round);
     const auto v_parents =

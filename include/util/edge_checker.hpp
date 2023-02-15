@@ -11,7 +11,7 @@ namespace hybridMST {
 
 struct WEdgeHash {
   std::size_t operator()(const WEdge& elem) const {
-    return elem.get_src() ^ (elem.get_dst() << 5) + elem.get_weight();
+    return elem.get_src() ^ ((elem.get_dst() << 5) + elem.get_weight());
   }
 };
 struct WEdgeEqual {
@@ -21,8 +21,9 @@ struct WEdgeEqual {
   }
 };
 
-template<typename Edges>
-std::unordered_set<WEdge, WEdgeHash, WEdgeEqual> insert_in_set(const Edges& edges) {
+template <typename Edges>
+std::unordered_set<WEdge, WEdgeHash, WEdgeEqual>
+insert_in_set(const Edges& edges) {
   std::unordered_set<WEdge, WEdgeHash, WEdgeEqual> map;
   for (const auto& edge : edges) {
     map.emplace(edge.get_src(), edge.get_dst(), edge.get_weight());
@@ -51,7 +52,7 @@ template <typename Edges> void check_graph_consistency(const Edges& edges) {
   Edges non_const_edges = edges;
   const auto sum_edges = mpi::allreduce_sum(edges.size());
   int everythink_ok = true;
-  if (sum_edges < (1000 * ctx.size())) {
+  if (sum_edges < (1000u * static_cast<std::size_t>(ctx.size()))) {
 
     std::vector<EdgeType> all_edges(ctx.rank() == 0 ? sum_edges : 0);
     mpi::gatherv(non_const_edges.data(), non_const_edges.size(), 0,
@@ -74,8 +75,9 @@ template <typename Edges> void check_graph_consistency(const Edges& edges) {
     everythink_ok = check_for_back_edge(edges, back_edges.buffer);
   }
   everythink_ok = mpi::allreduce_min(everythink_ok, ctx);
-  if(ctx.rank() == 0) {
-    std::cout << "Edge have been checked with res: " << everythink_ok << std::endl;
+  if (ctx.rank() == 0) {
+    std::cout << "Edge have been checked with res: " << everythink_ok
+              << std::endl;
   }
 }
 

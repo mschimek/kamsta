@@ -1,5 +1,6 @@
 #pragma once
 #include "RQuick/RQuick.hpp"
+#include "algorithms/algorithm_configurations.hpp"
 #include "algorithms/base_case_mst_algos.hpp"
 #include "algorithms/boruvka_allreduce.hpp"
 #include "algorithms/filter_boruvka_substeps/filter_helpers.hpp"
@@ -14,6 +15,8 @@
 #include "algorithms/hybrid_boruvka_substeps/representative_computation.hpp"
 #include "algorithms/local_contraction/local_contraction.hpp"
 #include "algorithms/twolevel_sorting/twolevel_sorting.hpp"
+#include "datastructures/compression/difference_encoded_graph.hpp"
+#include "datastructures/compression/uncompressed_graph.hpp"
 #include "datastructures/distributed_graph.hpp"
 #include "datastructures/growt.hpp"
 #include "definitions.hpp"
@@ -27,17 +30,11 @@
 
 namespace hybridMST {
 
-std::size_t id = 0;
+inline std::size_t id = 0;
 struct LeftoverManager {
-  void recurse_left() {
-    ++counter;
-  }
-  void come_back() {
-    --counter;
-  }
-  bool can_handle_leftovers() {
-    return counter > 0;
-  }
+  void recurse_left() { ++counter; }
+  void come_back() { --counter; }
+  bool can_handle_leftovers() { return counter > 0; }
   int counter = 0;
 };
 
@@ -143,7 +140,6 @@ inline void filter_boruvka_basecase(non_init_vector<EdgeType>& edges,
   const std::size_t initial_m = mpi::allreduce_sum(edges.size()) / num_worker;
   const std::size_t initial_n = global_n / num_worker;
 
-  bool stop_loop = false;
   non_init_vector<VId> compactifiedId_prevId;
   for (;; ++round) {
     memory_stats().print("boruvka - round: " + std::to_string(round));
@@ -236,7 +232,9 @@ inline void boruvka_recursive(
     non_init_vector<EdgeType>& edges, ParentArray& parent_array,
     non_init_vector<GlobalEdgeId>& mst_edge_ids, Weight threshold_weight,
     LabelCache& cache, std::size_t filter_threshold,
-    non_init_vector<EdgeType>& leftover_edges, LeftoverManager& leftover_manager, std::size_t initial_global_n, bool stop_recursion = false) {
+    non_init_vector<EdgeType>& leftover_edges,
+    LeftoverManager& leftover_manager, std::uint64_t initial_global_n,
+    bool stop_recursion = false) {
   mpi::MPIContext ctx;
   const auto id_copy = id;
   ++id;
@@ -272,8 +270,9 @@ inline void boruvka_recursive(
   stop_recursion = false;
   auto light_half = partition_edges(edges, pivot, stop_recursion);
   const auto num_heavy_edges = edges.size() - light_half.size();
-  if(ctx.rank() == 0) {
-  std::cout << "pivot: " << pivot << " threshold: " << threshold_weight << " depth: " << depth << std::endl;
+  if (ctx.rank() == 0) {
+    std::cout << "pivot: " << pivot << " threshold: " << threshold_weight
+              << " depth: " << depth << std::endl;
   }
   REORDERING_BARRIER
   get_timer().stop("partition_edges", round);
@@ -283,7 +282,8 @@ inline void boruvka_recursive(
   leftover_manager.recurse_left();
   boruvka_recursive(round, depth + 1, global_n, global_m_light_edges,
                     light_half, parent_array, mst_edge_ids, threshold_weight,
-                    cache, filter_threshold, leftover_edges, leftover_manager, initial_global_n, stop_recursion);
+                    cache, filter_threshold, leftover_edges, leftover_manager,
+                    initial_global_n, stop_recursion);
   leftover_manager.come_back();
   get_timer().start("boruvka_recursive_setup", round);
   dump(light_half);
@@ -297,8 +297,9 @@ inline void boruvka_recursive(
   if (global_n_filtered <= 1)
     return;
 
-  if(ctx.rank() == 0) {
-  std::cout << "pivot: " << pivot << " threshold: " << threshold_weight << " depth: " << depth << std::endl;
+  if (ctx.rank() == 0) {
+    std::cout << "pivot: " << pivot << " threshold: " << threshold_weight
+              << " depth: " << depth << std::endl;
   }
   boruvka_recursive_setup(round, edges, parent_array, pivot, cache,
                           leftover_edges);
@@ -318,11 +319,13 @@ inline void boruvka_recursive(
   get_timer().add("num_heavy_edges_filtered", id_copy, edges.size(),
                   {Timer::DatapointsOperation::ID});
   round += 20;
-  const bool perform_recursion = (!leftover_manager.can_handle_leftovers()) || do_perform_right_recursion(edges.size());
-  if(perform_recursion) {
-  boruvka_recursive(round, depth + 1, global_n_filtered, global_m_filtered,
-                    edges, parent_array, mst_edge_ids, pivot, cache, filter_threshold,
-                    leftover_edges, leftover_manager, initial_global_n);
+  const bool perform_recursion = (!leftover_manager.can_handle_leftovers()) ||
+                                 do_perform_right_recursion(edges.size());
+  if (perform_recursion) {
+    boruvka_recursive(round, depth + 1, global_n_filtered, global_m_filtered,
+                      edges, parent_array, mst_edge_ids, pivot, cache,
+                      filter_threshold, leftover_edges, leftover_manager,
+                      initial_global_n);
   } else {
     leftover_edges = std::move(edges);
   }
@@ -335,83 +338,76 @@ inline void init_parent_array(Edges& edges, ParentArray& parent_array,
   // SEQ_EX(ctx, PRINT_VAR(num_local_vertices););
   parlay::hashtable<parlay::hash_numeric<VId>> table(
       num_local_vertices * 1.1, parlay::hash_numeric<VId>{});
-#pragma omp parallel for
-  for (std::size_t i = 0; i < edges.size(); ++i) {
+  parallel_for(0, edges.size(), [&](std::size_t i) {
     const auto edge = edges[i];
     table.insert(edge.get_src());
-  }
+  });
   auto entries = table.entries();
   // SEQ_EX(ctx, PRINT_VAR(entries.size()););
   non_init_vector<ParentArray::VertexHasEdges> vertices_with_edges(
       entries.size());
-#pragma omp parallel for
-  for (std::size_t i = 0; i < entries.size(); ++i) {
+  parallel_for(0, entries.size(), [&](std::size_t i) {
     vertices_with_edges[i] = ParentArray::VertexHasEdges(entries[i], 1);
-  }
+  });
   // SEQ_EX(ctx, PRINT_VAR(vertices_with_edges.size()););
   parent_array.set_non_isolated_vertices(vertices_with_edges);
 }
 
-template <typename CompressedGraph>
-inline WEdgeList filter_boruvka(const CompressedGraph& compressed_graph,
-                                VertexRange range,
-                                std::size_t local_kernelization_level,
+template <typename WEdgeIds>
+inline void filter_boruvka_core(WEdgeIds& augmented_edges,
+                                ParentArray& parent_array,
+                                LabelCache& label_cache,
+                                non_init_vector<GlobalEdgeId>& mst_edge_ids,
+                                std::size_t global_n, std::size_t global_m,
                                 std::size_t filter_threshold) {
+  using WEdgeIdType = typename WEdgeIds::value_type;
   mpi::MPIContext ctx;
-  using EdgeType = typename CompressedGraph::WEdgeIdType;
-
-  auto augmented_edges = compressed_graph.get_WEdgeIds();
-  print_statistics(augmented_edges);
-  const std::size_t num_local_vertices = 1 + range.second - range.first;
-  const std::size_t global_n = mpi::allreduce_max(range.second) + 1;
-  const std::size_t global_m = mpi::allreduce_sum(augmented_edges.size(), ctx);
-  auto assign_identity = [](const VId i, const std::size_t& local_offset) {
-    return local_offset + i;
-  };
-  // SEQ_EX(ctx, PRINT_CONTAINER_WITH_INDEX(augmented_edges););
-
-  memory_stats().print("init boruvka");
-  // LabelCache cache(edges.size() + std::min(num_local_vertices,
-  // edges.size()));
-  LabelCache cache(0);
-  memory_stats().print("cache");
-  ParentArray parent_array(global_n);
-  REORDERING_BARRIER
-  memory_stats().print("parent array");
-  REORDERING_BARRIER
-  init_parent_array(augmented_edges, parent_array, num_local_vertices);
-  non_init_vector<GlobalEdgeId> mst_edge_ids;
-  mst_edge_ids.reserve(10 + num_local_vertices * 2);
-  REORDERING_BARRIER
-  get_timer().start("local_kernelization", 0);
-  REORDERING_BARRIER
-  memory_stats().print("before augmented edges");
-  // auto augmented_edges =
-  //     LocalKernelization::execute<const WEdge, WEdgeIdType>(range,
-  //     Span(edges));
-  // remove_one_factors(augmented_edges, mst_edge_ids);
-  memory_stats().print("augmented edges");
-  if (local_kernelization_level == 1) {
-    local_contraction(augmented_edges, mst_edge_ids, parent_array);
-    augmented_edges.shrink_to_fit();
-  }
-  REORDERING_BARRIER
-  get_timer().stop("local_kernelization", 0);
-  REORDERING_BARRIER
-
   int round = 0;
   int depth = 0;
   id = 0;
-  non_init_vector<EdgeType> leftover_edges;
+  non_init_vector<WEdgeIdType> leftover_edges;
   LeftoverManager leftover_manager;
+  const VId initial_global_n = global_n;
   boruvka_recursive(round, depth, global_n, global_m, augmented_edges,
-                    parent_array, mst_edge_ids, 0, cache, filter_threshold,
-                    leftover_edges, leftover_manager, global_n);
-  // SEQ_EX(ctx, PRINT_VAR(mst_edge_ids.size()););
-  get_timer().start("send_mst_edges_back");
+                    parent_array, mst_edge_ids, 0, label_cache,
+                    filter_threshold, leftover_edges, leftover_manager, initial_global_n);
   dump(augmented_edges);
+}
+
+template <typename AlgorithmConfigType, typename EdgeContainer>
+inline WEdgeList filter_boruvka_setup_and_preprocessing(
+    EdgeContainer& edge_container,
+    const AlgorithmConfigType& algorithm_configuration) {
+  mpi::MPIContext ctx;
+
+  get_timer().start("local_kernelization");
+  auto augmented_edges = edge_container.get_WEdgeIds();
+
+  print_statistics(augmented_edges);
+  const std::size_t num_local_vertices =
+      get_number_local_vertices(augmented_edges);
+  const std::size_t global_n =
+      mpi::allreduce_max(get_max_local_vertex(augmented_edges)) + 1;
+  const std::size_t global_m = mpi::allreduce_sum(augmented_edges.size());
+  non_init_vector<GlobalEdgeId> mst_edge_ids;
+  mst_edge_ids.reserve(10 + num_local_vertices * 2);
+  LabelCache cache(0);
+  get_timer().start("parent_array_init");
+  ParentArray parent_array(global_n);
+  init_parent_array(augmented_edges, parent_array, num_local_vertices);
+  get_timer().stop("parent_array_init");
+
+  local_contraction_dispatcher(algorithm_configuration, augmented_edges,
+                               mst_edge_ids, parent_array);
+  get_timer().stop("local_kernelization");
+
+  filter_boruvka_core(augmented_edges, parent_array, cache, mst_edge_ids,
+                      global_n, global_m,
+                      algorithm_configuration.filter_threshold);
+
+  get_timer().start("send_mst_edges_back");
   auto mst_edges =
-      GetMstEdge::execute(compressed_graph.get_WEdges(), mst_edge_ids);
+      GetMstEdge::execute(edge_container.get_WEdges(), mst_edge_ids);
   const std::size_t global_n_filtered = parent_array.global_num_vertices();
   if (ctx.rank() == 0) {
     PRINT_VAR(requested_new_label);
@@ -420,7 +416,50 @@ inline WEdgeList filter_boruvka(const CompressedGraph& compressed_graph,
   }
   requested_new_label = 0;
   get_timer().stop("send_mst_edges_back");
-
   return mst_edges;
+}
+
+template <typename InputEdges, typename AlgorithmConfigType>
+inline WEdgeList
+filter_boruvka(InputEdges input_edges,
+               const AlgorithmConfigType& algorithm_configuration) {
+  using WEdgeType = typename AlgorithmConfigType::WEdgeType;
+  using WEdgeIdType = typename AlgorithmConfigType::WEdgeIdType;
+  mpi::MPIContext ctx;
+  get_timer().add("graph_num_edges_initial", 0, input_edges.size(),
+                  Timer::DatapointsOperation::ID);
+  const std::size_t num_local_vertices =
+      input_edges.empty()
+          ? 0
+          : (input_edges.back().get_src() - input_edges.front().get_src()) + 1;
+  get_timer().add("graph_num_vertices_initial", 0, (num_local_vertices),
+                  Timer::DatapointsOperation::ID);
+
+  const std::size_t edge_offset =
+      hybridMST::mpi::exscan_sum(input_edges.size(), ctx, 0ul);
+
+  switch (algorithm_configuration.compression) {
+  case Compression::NO_COMPRESSION: {
+    get_timer().start("edge_setup");
+    UncompressedGraph<WEdgeType, WEdgeIdType> edge_container(
+        std::move(input_edges), edge_offset);
+    get_timer().stop("edge_setup");
+    return filter_boruvka_setup_and_preprocessing(edge_container,
+                                                  algorithm_configuration);
+  }
+  case Compression::SEVEN_BIT_DIFF_ENCODING: {
+    get_timer().start("edge_setup");
+    VertexRange range(input_edges.front().get_src(),
+                      input_edges.back().get_src());
+    hybridMST::DifferenceEncodedGraph<WEdgeType, WEdgeIdType> edge_container(
+        input_edges, ctx.threads_per_mpi_process(), edge_offset, range);
+    dump(input_edges);
+    get_timer().stop("edge_setup");
+    return filter_boruvka_setup_and_preprocessing(edge_container,
+                                                  algorithm_configuration);
+  }
+  default:
+    return WEdgeList{};
+  }
 }
 } // namespace hybridMST

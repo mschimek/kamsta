@@ -3,6 +3,7 @@
 #include "RQuick/RQuick.hpp"
 #include "parlay/sequence.h"
 
+#include "algorithms/algorithm_configurations.hpp"
 #include "algorithms/base_case_mst_algos.hpp"
 #include "algorithms/boruvka_allreduce.hpp"
 #include "algorithms/hybrid_boruvka_substeps/duplicate_detection.hpp"
@@ -15,8 +16,10 @@
 #include "algorithms/hybrid_boruvka_substeps/misc.hpp"
 #include "algorithms/hybrid_boruvka_substeps/representative_computation.hpp"
 #include "algorithms/input_edge_partitioning.hpp"
+#include "algorithms/local_contraction/local_boruvka/local_mst_and_contraction.hpp"
 #include "algorithms/local_contraction/local_contraction.hpp"
-#include "datastructures/concurrent_lookup_map.hpp";
+#include "datastructures/compression/difference_encoded_graph.hpp"
+#include "datastructures/compression/uncompressed_graph.hpp"
 #include "datastructures/distributed_graph.hpp"
 #include "datastructures/growt.hpp"
 #include "definitions.hpp"
@@ -63,8 +66,8 @@ void visualise_local(const LocalRefEdges& local_ref_edges,
   const auto mst_edges = GetMstEdge::execute(global_ref_edges, mst_ids);
   SEQ_EX(ctx, PRINT_VECTOR(mst_edges););
 }
+// for debugging purposes only
 template <typename Edges> void verify_edges(Edges& edges) {
-  using EdgeType = typename Edges::value_type;
   mpi::MPIContext ctx;
   Edge min_edge{edges.front().get_src(), edges.front().get_dst()};
   Edge max_edge{edges.back().get_src(), edges.back().get_dst()};
@@ -104,44 +107,11 @@ template <typename Edges> void verify_edges(Edges& edges) {
   }
 }
 
-template <typename CompressedGraph>
-inline WEdgeList boruvka(const CompressedGraph& compressed_graph,
-                         VertexRange range,
-                         std::size_t local_kernelization_level) {
-  // get_timer().disable_measurements();
-  using WEdgeIdType = typename CompressedGraph::WEdgeIdType;
+template <typename WEdgeIds>
+inline void boruvka_core(WEdgeIds& augmented_edges,
+                         non_init_vector<GlobalEdgeId>& mst_edge_ids) {
   hybridMST::mpi::MPIContext ctx;
-
-  // SEQ_EX(ctx, PRINT_VECTOR(edges););
-  // SEQ_EX(ctx, PRINT_VAR(edges.size()););
-
-  const std::size_t initial_n_real = mpi::allreduce_max(range.second) + 1;
-  const std::size_t num_worker = ctx.size() * ctx.threads_per_mpi_process();
-  const std::size_t initial_m =
-      mpi::allreduce_sum(compressed_graph.num_local_edges()) / num_worker;
-  const std::size_t initial_n = initial_n_real / num_worker;
-
-  get_timer().add("graph_num_edges_initial", 0,
-                  compressed_graph.num_local_edges(),
-                  Timer::DatapointsOperation::ID);
-  get_timer().add("graph_num_vertices_initial", 0,
-                  (range.second - range.first + 1),
-                  Timer::DatapointsOperation::ID);
-  non_init_vector<GlobalEdgeId> mst_edge_ids;
-
-  get_timer().start("local_kernelization");
-  // auto augmented_edges = LocalKernelization::execute(range, Span<const
-  // WEdge>(edges.data(), edges.size()));
-  auto augmented_edges =
-      compressed_graph.get_WEdgeIds(); // LocalKernelization::execute<const
-                                       // WEdge, WEdgeId>(range, Span(edges));
-  // verify_edges(augmented_edges);
-  if (local_kernelization_level == 1) {
-    local_contraction(augmented_edges, mst_edge_ids);
-  }
-  get_timer().stop("local_kernelization");
-  get_timer().add("graph_num_edges_after_kernelization", 0,
-                  augmented_edges.size(), Timer::DatapointsOperation::ID);
+  using WEdgeIdType = typename WEdgeIds::value_type;
 
   bool stop_loop = false;
   VId num_global_vertices = VID_UNDEFINED;
@@ -154,16 +124,20 @@ inline WEdgeList boruvka(const CompressedGraph& compressed_graph,
     if (is_first_iteration) {
       // cannot not query this value before, as it would create overhead
       // otherwise ...
-      get_timer().add("graph_num_vertices_after_kernelization", 0,
-                      graph.local_n(), Timer::DatapointsOperation::ID);
+      statistics_helper("graph_num_vertices_after_kernelization",
+                        graph.local_n());
     }
     get_timer().start("_stop_criterion", i);
     REORDERING_BARRIER
-    stop_loop = stop_boruvka(graph, initial_m, initial_n);
+    stop_loop =
+        stop_boruvka(graph, 0, 0); // TODO change signature of stop_boruvka
     REORDERING_BARRIER
     get_timer().stop("_stop_criterion", i);
     if (stop_loop) {
       num_global_vertices = MakeVerticesConsecutive::execute(graph);
+      // TODO check whether we want some statistics about the number of vertices
+      // after making the ids consecutive
+      (void)num_global_vertices;
       get_timer().stop("graph_init", i);
       break;
     }
@@ -171,10 +145,8 @@ inline WEdgeList boruvka(const CompressedGraph& compressed_graph,
       REORDERING_BARRIER
       get_timer().stop("graph_init", i);
 
-      get_timer().add("graph_num_edges", i, graph.edges().size(),
-                      Timer::DatapointsOperation::ID);
-      get_timer().add("graph_num_vertices", i, graph.local_n(),
-                      Timer::DatapointsOperation::ID);
+      statistics_helper("graph_num_vertices", graph.local_n(), i);
+      statistics_helper("graph_num_edges", graph.edges().size(), i);
       get_timer().start("min_edges", i);
       REORDERING_BARRIER
       auto min_edge_ids_par = MinimumEdgeOpenMP::execute(graph);
@@ -246,19 +218,88 @@ inline WEdgeList boruvka(const CompressedGraph& compressed_graph,
       augmented_edges.empty() ? 0 : augmented_edges.back().get_src();
   const std::size_t n = mpi::allreduce_max(v_max) + 1;
   dense_boruvka_allreduce(n, augmented_edges, ids_gbbs);
-  auto mst_edge_ids_combined = combine(mst_edge_ids, ids_gbbs);
+  mst_edge_ids = combine(mst_edge_ids, ids_gbbs);
   REORDERING_BARRIER
   get_timer().stop("base_case");
-  get_timer().start("send_mst_edges_back");
-  REORDERING_BARRIER
-  auto mst_edges =
-      GetMstEdge::execute(compressed_graph.get_WEdges(), mst_edge_ids_combined);
-  REORDERING_BARRIER
-  get_timer().stop("send_mst_edges_back");
-  // SEQ_EX(ctx, std::sort(mst_edges.begin(), mst_edges.end(),
-  //                       SrcDstWeightOrder<WEdge>{});
-  //        PRINT_VECTOR(mst_edges););
+}
 
+template <typename AlgorithmConfigType, typename EdgeContainer>
+inline WEdgeList boruvka_setup_and_preprocessing(
+    EdgeContainer& edge_container,
+    const AlgorithmConfigType& algorithm_configuration) {
+
+  mpi::MPIContext ctx;
+  get_timer().start("local_kernelization");
+  non_init_vector<GlobalEdgeId> mst_edge_ids;
+  auto augmented_edges = edge_container.get_WEdgeIds();
+  // update_edge_ids(augmented_edges);
+  // SEQ_EX(ctx, PRINT_VECTOR_WITH_INDEX(augmented_edges););
+  // if (ctx.rank() == 0) {
+  //   PRINT_VECTOR_WITH_INDEX(augmented_edges);
+  // }
+  const auto num_edge_before = mpi::allreduce_sum(augmented_edges.size());
+  local_contraction_dispatcher(algorithm_configuration, augmented_edges,
+                               mst_edge_ids);
+  const auto num_edge_after = mpi::allreduce_sum(augmented_edges.size());
+  if (ctx.rank() == 0) {
+    std::cout << "num_edges_before: " << num_edge_before
+              << " num_edge_after: " << num_edge_after << std::endl;
+  }
+  // DistributedGraph<typename AlgorithmConfigType::WEdgeIdType, true> graph(
+  //     augmented_edges, 0);
+  // SEQ_EX(ctx, std::cout << augmented_edges.front().get_src() << " "
+  //                       << augmented_edges.back().get_src() << " "
+  //                       << graph.local_n() << std::endl;);
+
+  get_timer().stop("local_kernelization");
+
+  boruvka_core(augmented_edges, mst_edge_ids);
+
+  get_timer().start("send_mst_edges_back");
+  auto mst_edges =
+      GetMstEdge::execute(edge_container.get_WEdges(), mst_edge_ids);
+  get_timer().stop("send_mst_edges_back");
   return mst_edges;
 }
+
+template <typename InputEdges, typename AlgorithmConfigType>
+inline WEdgeList boruvka(InputEdges input_edges,
+                         const AlgorithmConfigType& algorithm_configuration) {
+  using WEdgeType = typename AlgorithmConfigType::WEdgeType;
+  using WEdgeIdType = typename AlgorithmConfigType::WEdgeIdType;
+  mpi::MPIContext ctx;
+
+  get_timer().add("graph_num_edges_initial", 0, input_edges.size(),
+                  Timer::DatapointsOperation::ID);
+  const std::size_t num_local_vertices = get_number_local_vertices(input_edges);
+  get_timer().add("graph_num_vertices_initial", 0, (num_local_vertices),
+                  Timer::DatapointsOperation::ID);
+
+  const std::size_t edge_offset =
+      hybridMST::mpi::exscan_sum(input_edges.size(), ctx, 0ul);
+  switch (algorithm_configuration.compression) {
+  case Compression::NO_COMPRESSION: {
+    get_timer().start("edge_setup");
+    UncompressedGraph<WEdgeType, WEdgeIdType> edge_container(
+        std::move(input_edges), edge_offset);
+    get_timer().stop("edge_setup");
+    return boruvka_setup_and_preprocessing(edge_container,
+                                           algorithm_configuration);
+  }
+  case Compression::SEVEN_BIT_DIFF_ENCODING: {
+    get_timer().start("edge_setup");
+    VertexRange range(input_edges.front().get_src(),
+                      input_edges.back().get_src());
+    hybridMST::DifferenceEncodedGraph<WEdgeType, WEdgeIdType> edge_container(
+        input_edges, ctx.threads_per_mpi_process(), edge_offset, range);
+    dump(input_edges);
+    get_timer().stop("edge_setup");
+    return boruvka_setup_and_preprocessing(edge_container,
+                                           algorithm_configuration);
+  }
+  default:
+    return WEdgeList{};
+  }
+}
+
 } // namespace hybridMST

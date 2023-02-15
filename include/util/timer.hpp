@@ -20,19 +20,19 @@ std::chrono::high_resolution_clock::time_point now();
 struct StandardKey {
   using Id = std::string;
   using Count = std::uint64_t;
-  Id id;
-  Count count;
+  Id id_;
+  Count count_;
   StandardKey() = default;
-  StandardKey(const Id& id, const Count& count) : id{id}, count{count} {}
+  StandardKey(const Id& id, const Count& count) : id_{id}, count_{count} {}
   void append_to_id(const std::string& str) {
-    id.append("_");
-    id.append(str);
+    id_.append("_");
+    id_.append(str);
   }
   bool operator==(const StandardKey& other_key) const {
-    return std::tie(id, count) == std::tie(other_key.id, other_key.count);
+    return std::tie(id_, count_) == std::tie(other_key.id_, other_key.count_);
   }
   friend std::ostream& operator<<(std::ostream& out, const StandardKey& key) {
-    return out << key.id << "-" << key.count;
+    return out << key.id_ << "-" << key.count_;
   }
   std::vector<char> serialize() const;
 };
@@ -41,8 +41,8 @@ struct StandardKey {
 namespace std {
 template <> struct hash<hybridMST::StandardKey> {
   std::size_t operator()(const hybridMST::StandardKey& key) const {
-    return (hash<hybridMST::StandardKey::Id>{}(key.id) ^
-            (std::hash<hybridMST::StandardKey::Count>{}(key.count) << 1) >> 1);
+    return (hash<hybridMST::StandardKey::Id>{}(key.id_) ^
+            (std::hash<hybridMST::StandardKey::Count>{}(key.count_) << 1) >> 1);
   }
 };
 } // namespace std
@@ -180,7 +180,7 @@ public:
       for (std::size_t i = 0; i < all_times.size(); ++i) {
         auto key_ = key;
         std::string p_info = "p:" + std::to_string(i) + "-";
-        key_.id.insert(0, p_info);
+        key_.id_.insert(0, p_info);
         const auto& time = all_times[i];
         const TimeType tt{time, "allTimes"};
         out = std::make_pair(key_, tt);
@@ -204,7 +204,7 @@ public:
       for (std::size_t i = 0; i < all_times.size(); ++i) {
         auto key_ = key;
         std::string p_info = "p:" + std::to_string(i) + "-";
-        key_.id.insert(0, p_info);
+        key_.id_.insert(0, p_info);
         const auto& time = all_times[i];
         out = std::make_tuple(key_, time.start, time.stop);
       }
@@ -322,5 +322,15 @@ private:
 inline Timer& get_timer() {
   static Timer timer;
   return timer;
+}
+
+inline void statistics_helper(const std::string& key, std::uint64_t data,
+                              std::size_t iteration = 0) {
+  get_timer().add(key, iteration, data,
+                  Timer::DatapointsOperation::SUM);
+  get_timer().add(key, iteration, data,
+                  Timer::DatapointsOperation::MAX);
+  get_timer().add(key, iteration, data,
+                  Timer::DatapointsOperation::MAX_DIF);
 }
 } // namespace hybridMST

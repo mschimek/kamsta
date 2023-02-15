@@ -34,23 +34,22 @@ non_init_vector<PEID> first_pass(Tasks& tasks, const Container& data,
                                  DstCalculator&& dstCalculator) {
   const auto& grid_communicators = get_grid_communicators();
   non_init_vector<PEID> final_destinations(data.size());
-#pragma omp parallel for
-  for (std::size_t i = 0; i < tasks.size(); ++i) {
+  parallel_for(0, tasks.size(), [&](std::size_t i) {
     auto& task = tasks[i];
     for (std::size_t j = task.idx_begin; j < task.idx_end; ++j) {
       const auto& elem = data[j];
       if (filter(elem, j)) {
         final_destinations[j] = -1;
-        continue;
-      }
-      const PEID final_destination = dstCalculator(elem, j);
-      const PEID intermediate_destination =
-          grid_communicators.col_index(final_destination);
+      } else {
+        const PEID final_destination = dstCalculator(elem, j);
+        const PEID intermediate_destination =
+            grid_communicators.col_index(final_destination);
 
-      final_destinations[j] = final_destination;
-      ++task.send_counts[intermediate_destination];
+        final_destinations[j] = final_destination;
+        ++task.send_counts[intermediate_destination];
+      }
     }
-  }
+  });
   return final_destinations;
 }
 
@@ -64,26 +63,24 @@ void second_pass(SendMessages& send_messages, Tasks& tasks,
   using MessageType = typename SendMessages::MessageType;
   const auto& grid_communicators = get_grid_communicators();
   mpi::MPIContext ctx;
-#pragma omp parallel for
-  for (std::size_t i = 0; i < tasks.size(); ++i) {
+  parallel_for(0, tasks.size(), [&](std::size_t i) {
     auto& task = tasks[i];
     for (std::size_t j = task.idx_begin; j < task.idx_end; ++j) {
       const auto& elem = data[j];
       const auto final_destination = final_destinations[j];
-      if (final_destination == -1) {
-        continue;
-      }
+      if (final_destination != -1) {
 
-      const PEID intermediate_destination =
-          grid_communicators.col_index(final_destination);
-      const auto idx = send_displs[intermediate_destination] +
-                       task.send_counts[intermediate_destination];
-      send_messages[idx] = MessageType{transformer(elem, j)};
-      send_messages[idx].set_sender(ctx.rank());
-      send_messages[idx].set_receiver(final_destination);
-      ++task.send_counts[intermediate_destination];
+        const PEID intermediate_destination =
+            grid_communicators.col_index(final_destination);
+        const auto idx = send_displs[intermediate_destination] +
+                         task.send_counts[intermediate_destination];
+        send_messages[idx] = MessageType{transformer(elem, j)};
+        send_messages[idx].set_sender(ctx.rank());
+        send_messages[idx].set_receiver(final_destination);
+        ++task.send_counts[intermediate_destination];
+      }
     }
-  }
+  });
 }
 
 template <typename Container, typename Filter, typename Transformer,
@@ -133,8 +130,7 @@ template <typename Tasks, typename Container>
 void first_pass(Tasks& tasks, const Container& data) {
 
   const auto& grid_communicators = get_grid_communicators();
-#pragma omp parallel for
-  for (std::size_t i = 0; i < tasks.size(); ++i) {
+  parallel_for(0, tasks.size(), [&](std::size_t i) {
     auto& task = tasks[i];
     for (std::size_t j = task.idx_begin; j < task.idx_end; ++j) {
       const auto& elem = data[j];
@@ -142,7 +138,7 @@ void first_pass(Tasks& tasks, const Container& data) {
           grid_communicators.row_index(elem.get_receiver());
       ++task.send_counts[row_destination];
     }
-  }
+  });
 }
 
 template <typename SendMessages, typename Container, typename Tasks,
@@ -151,8 +147,7 @@ void second_pass(SendMessages& send_messages, Tasks& tasks,
                  const Container& data,
                  const std::vector<std::size_t>& send_displs) {
   const auto& grid_communicators = get_grid_communicators();
-#pragma omp parallel for
-  for (std::size_t i = 0; i < tasks.size(); ++i) {
+  parallel_for(0, tasks.size(), [&](std::size_t i) {
     auto& task = tasks[i];
     for (std::size_t j = task.idx_begin; j < task.idx_end; ++j) {
       const auto& elem = data[j];
@@ -161,13 +156,13 @@ void second_pass(SendMessages& send_messages, Tasks& tasks,
       const auto idx =
           send_displs[row_destination] + task.send_counts[row_destination];
       if constexpr (extract_payload) {
-        send_messages[idx] = elem.payload;
+        send_messages[idx] = elem.payload();
       } else {
         send_messages[idx] = elem;
       }
       ++task.send_counts[row_destination];
     }
-  }
+  });
 }
 
 template <typename Container, bool extract_payload = false>
@@ -176,7 +171,6 @@ inline auto two_level_alltoall(Container& data) {
   mpi::MPIContext ctx;
   const auto& col_ctx = get_grid_communicators().get_col_ctx();
   const std::size_t num_threads = ctx.threads_per_mpi_process();
-  const auto& grid_communicators = get_grid_communicators();
   auto tasks = create_tasks(data.size(), num_threads, col_ctx.size());
 
   get_timer().start_phase_measurement("twopass_loop1");
@@ -235,11 +229,11 @@ inline auto two_level_alltoall(Container& data) {
 /// 4  5  6  7 (17)
 /// 8  9  10 11
 /// 12 13 14 15
-template <bool extract_payload, typename Container, typename Filter, typename Transformer,
-          typename DstCalculator>
+template <bool extract_payload, typename Container, typename Filter,
+          typename Transformer, typename DstCalculator>
 auto two_level_alltoall_impll(Container&& data, Filter&& filter,
-                        Transformer&& transformer,
-                        DstCalculator&& dstCalculator) {
+                              Transformer&& transformer,
+                              DstCalculator&& dstCalculator) {
 
   mpi::MPIContext ctx;
   auto intermediate_msgs =

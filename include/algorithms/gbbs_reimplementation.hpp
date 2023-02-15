@@ -1,3 +1,29 @@
+// This code is part of the project "Theoretically Efficient Parallel Graph
+// Algorithms Can Be Fast and Scalable", presented at Symposium on Parallelism
+// in Algorithms and Architectures, 2018.
+// Copyright (c) 2018 Laxman Dhulipala, Guy Blelloch, and Julian Shun
+//
+// Permission is hereby granted, free of charge, to any person obtaining a copy
+// of this software and associated documentation files (the "Software"), to deal
+// in the Software without restriction, including without limitation the rights
+// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+// copies of the Software, and to permit persons to whom the Software is
+// furnished to do so, subject to the following conditions:
+//
+// The above copyright notice and this permission notice shall be included in
+// all  copies or substantial portions of the Software.
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+// SOFTWARE.
+
+// This file is based on https://github.com/ParAlg/gbbs/
+// and was modified by Matthias Schimek
+
 #pragma once
 
 #include <algorithm>
@@ -7,6 +33,7 @@
 #include <random>
 
 #include <tbb/parallel_for.h>
+#include "gbbs_bridge/bridge.hpp"
 
 #include "parlay/delayed_sequence.h"
 #include "parlay/internal/binary_search.h"
@@ -21,16 +48,12 @@
 #include "parlay/slice.h"
 #include "parlay/utilities.h"
 
-#include "algorithms/gbbs/bridge.hpp"
 #include "definitions.hpp"
 #include "mpi/context.hpp"
 #include "util/atomic_ops.hpp"
 #include "util/macros.hpp"
 #include "util/timer.hpp"
 #include "util/utils.hpp"
-
-// based on https://github.com/ParAlg/gbbs/ //TODO add license, correct
-// references
 
 namespace hybridMST {
 
@@ -59,11 +82,11 @@ void compute_min_edges(
       return lhs.edge_id < rhs.edge_id;
     return false;
   };
-  parallel_for(0, n, [&](size_t i) {
+  hybridMST::parallel_for(0, n, [&](size_t i) {
     VId v = vertices[i];
     min_edges[normalizer(v)] = EdgeIdWeight{LOCAL_EDGEID_UNDEFINED, WEIGHT_MAX};
   });
-  parallel_for(0, m, gbbs::kDefaultGranularity, [&](size_t i) {
+  hybridMST::parallel_for(0, m, [&](size_t i) {
     const LocalEdgeId e_id = edge_ids[i];
     const auto& edge = edges[e_id];
     const EdgeIdWeight id_weight{e_id, edge.get_weight()};
@@ -81,13 +104,12 @@ void determine_mst_edges(std::size_t n, const MinEdges& min_edges,
                          const Edges& edges, const Vertices& vertices,
                          Parents& parents, RootsInfo& is_root,
                          ExhaustionInfo& exhausted, MstEdges& new_mst_edges) {
-  using namespace parlay_bridge;
-  parallel_for(0, n, gbbs::kDefaultGranularity, [&](size_t i) {
+  hybridMST::parallel_for(0, n, [&](size_t i) {
     const VId v = vertices[i];
     const EdgeIdWeight& e = min_edges[v].load();
     if (e.edge_id == LOCAL_EDGEID_UNDEFINED) {
       // no more edges incident to v in this batch.
-      exhausted[v] = true;
+      exhausted[i] = true;
       is_root[i] = false;
       new_mst_edges[i] = LOCAL_EDGEID_UNDEFINED;
     } else {
@@ -127,7 +149,7 @@ add_new_mst_edges_to_mst_array(std::size_t n, std::size_t nb_mst_edges,
 
   // mpi::MPIContext ctx;
   nb_mst_edges += nb_added_mst_edges;
-  parlay_bridge::parallel_for(0, nb_added_mst_edges, [&](size_t i) {
+  hybridMST::parallel_for(0, nb_added_mst_edges, [&](size_t i) {
     // mst[prev_n_in_mst, nb_mst_edges) contains sizeof(LocalEdgeId) <=
     // sizeof(GlobalEdgeId) indices -> will be replaced with the global ids
     // if (ctx.rank() == 1) {
@@ -140,7 +162,7 @@ add_new_mst_edges_to_mst_array(std::size_t n, std::size_t nb_mst_edges,
 
 template <typename Vertices, typename Parents>
 void update_parents(std::size_t n, const Vertices& vertices, Parents& parents) {
-  parlay_bridge::parallel_for(0, n, [&](size_t i) {
+  hybridMST::parallel_for(0, n, [&](size_t i) {
     const VId v = vertices[i];
     while (parents[v] != parents[parents[v]]) {
       parents[v] = parents[parents[v]];

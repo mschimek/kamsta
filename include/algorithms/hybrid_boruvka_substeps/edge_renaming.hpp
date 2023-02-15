@@ -17,10 +17,8 @@ struct EdgeRenamer {
     const std::size_t nb_edges = graph.edges().size();
     const auto& locator = graph.locator();
     // auto handles = growt::create_handle_ets(new_names_ghost_vertices);
-#pragma omp parallel for
-    for (std::size_t i = 0; i < nb_edges; ++i) {
+    parallel_for(0, nb_edges, [&](std::size_t i) {
       auto& edge = graph.edges()[i];
-      auto old_edge = edge;
       VId src = edge.get_src();
       VId dst = edge.get_dst();
       const VId src_local = graph.get_local_id(src);
@@ -37,7 +35,7 @@ struct EdgeRenamer {
         dst = (it == new_names_ghost_vertices.end()) ? src : (*it).second;
         edge.set_dst(dst);
       }
-    }
+    });
   }
 };
 

@@ -19,10 +19,9 @@ public:
     assign_initialize(home_of_predecessors, [](std::size_t&) { return -1; });
   }
   void reset_marks() {
-#pragma omp parallel for
-    for (std::size_t i = 0; i < predecessors.size(); ++i) {
+    parallel_for(0, predecessors.size(), [&](std::size_t i) {
       predecessors[i] = reset_TMSB(predecessors[i]);
-    }
+    });
   }
   auto compute_vertices_with_nonfinal_representatives() const {
     auto idx_to_query = parlay::sequence<std::uint8_t>::from_function(
@@ -128,20 +127,20 @@ struct IsRepresentative_Push {
     auto recv =
         mpi::alltoall_combined(min_edge_idx, filter, transformer, dst_computer);
 
-#pragma omp parallel for
-    for (std::size_t i = 0; i < recv.buffer.size(); ++i) {
+    parallel_for(0, recv.buffer.size(), [&](std::size_t i) {
       const auto& remote_edge = recv.buffer[i];
       const VId local_id = graph.get_local_id(remote_edge.get_dst());
       const VId min_edge_id = min_edge_idx[local_id];
       const auto& local_edge = graph.edges()[min_edge_id];
-      if (!is_src_part_of_pseudo_root(local_edge, remote_edge))
-        continue;
+      if (!is_src_part_of_pseudo_root(local_edge, remote_edge)) {
+        return;
+      }
       if (is_src_root(local_edge, remote_edge)) {
         reps.mark_as_root(local_id, local_edge.get_src());
       } else {
         reps.set_final_representative(local_id, local_edge.get_dst());
       }
-    }
+    });
     return reps;
   }
 };

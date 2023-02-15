@@ -18,11 +18,10 @@
 #include "read_config_file.hpp"
 #include "tlx/cmdline_parser.hpp"
 
-//#include "algorithms/boruvka_based_on_external_subfunctions.hpp"
+#include "algorithms/algorithm_configurations.hpp"
 #include "algorithms/base_case_mst_algos.hpp"
 #include "algorithms/hybrid_boruvka.hpp"
 #include "algorithms/hybrid_boruvka_edgefilter.hpp"
-#include "datastructures/compressed_graph.hpp"
 #include "datastructures/compression/difference_encoded_graph.hpp"
 #include "datastructures/growt.hpp"
 #include "mpi/alltoall.hpp"
@@ -32,6 +31,8 @@
 #include "util/communication_volume_measurements.hpp"
 #include "util/macros.hpp"
 #include "util/timer.hpp"
+
+#include "build_config.hpp"
 
 inline hybridMST::benchmarks::CmdParameters read_cmdline(int argc,
                                                          char* argv[]) {
@@ -68,6 +69,8 @@ inline hybridMST::benchmarks::CmdParameters read_cmdline(int argc,
   cp.add_bool("weak_scaling_workers",
               params.graph_params.is_weak_scaled_num_workers,
               "perform weak scaling on worker level (each used core)");
+  cp.add_bool("print_input", params.print_input,
+              "print the input (for debugging)");
   cp.add_string(
       "distance_type", params.graph_params.distance_type,
       "choose the distance type (RANDOM, EUCLIDEAN, SQUARED_EUCLIDEAN)");
@@ -76,6 +79,8 @@ inline hybridMST::benchmarks::CmdParameters read_cmdline(int argc,
   cp.add_size_t(
       "local_kernelization_level", params.algo_params.local_kernelization_level,
       "0 = do not use kernelization, 1 = contract local edges and vertice");
+  cp.add_size_t("compression_level", params.algo_params.compression_level,
+                "0 = do not use compression, 1 = use seven bit encoding");
   cp.add_size_t("weak_scaling_level", weak_scaling_level,
                 "0 - no weak scaling, 1 - weak scaling on worker level (each \
                 used core), 2 - weak scaling on mpi proc level");
@@ -108,32 +113,100 @@ inline hybridMST::benchmarks::CmdParameters read_cmdline(int argc,
   return params;
 }
 
-template <typename CompressedGraph>
-void run_experiments(const hybridMST::benchmarks::CmdParameters& params,
-                     CompressedGraph& compressed_graph) {
+#ifdef USE_EXPLICIT_INSTANTIATION
+extern template hybridMST::WEdgeList
+hybridMST::boruvka(std::vector<hybridMST::WEdge>,
+                   const hybridMST::AlgorithmConfig<hybridMST::WEdge_4_1,
+                                                    hybridMST::WEdgeId_4_1_7>&);
+extern template hybridMST::WEdgeList
+hybridMST::boruvka(std::vector<hybridMST::WEdge>,
+                   const hybridMST::AlgorithmConfig<hybridMST::WEdge_5_1,
+                                                    hybridMST::WEdgeId_6_1_7>&);
+extern template hybridMST::WEdgeList
+hybridMST::boruvka(std::vector<hybridMST::WEdge>,
+                   const hybridMST::AlgorithmConfig<hybridMST::WEdge_6_1,
+                                                    hybridMST::WEdgeId24>&);
+extern template hybridMST::WEdgeList hybridMST::boruvka(
+    std::vector<hybridMST::WEdge>,
+    const hybridMST::AlgorithmConfig<hybridMST::WEdge, hybridMST::WEdgeId>&);
+
+extern template hybridMST::WEdgeList hybridMST::filter_boruvka(
+    std::vector<hybridMST::WEdge>,
+    const hybridMST::AlgorithmConfig<hybridMST::WEdge_4_1,
+                                     hybridMST::WEdgeId_4_1_7>&);
+extern template hybridMST::WEdgeList hybridMST::filter_boruvka(
+    std::vector<hybridMST::WEdge>,
+    const hybridMST::AlgorithmConfig<hybridMST::WEdge_5_1,
+                                     hybridMST::WEdgeId_6_1_7>&);
+extern template hybridMST::WEdgeList hybridMST::filter_boruvka(
+    std::vector<hybridMST::WEdge>,
+    const hybridMST::AlgorithmConfig<hybridMST::WEdge_6_1,
+                                     hybridMST::WEdgeId24>&);
+extern template hybridMST::WEdgeList hybridMST::filter_boruvka(
+    std::vector<hybridMST::WEdge>,
+    const hybridMST::AlgorithmConfig<hybridMST::WEdge, hybridMST::WEdgeId>&);
+#endif
+
+template <typename InputEdges, typename WEdgeType, typename WEdgeIdType>
+void run_experiments(InputEdges input_edges, hybridMST::VertexRange range,
+                     const hybridMST::benchmarks::CmdParameters& params) {
+
+  static_assert(
+      std::is_same_v<InputEdges, typename std::vector<hybridMST::WEdge>>);
   hybridMST::mpi::MPIContext ctx;
+  using InputWEdgeType = typename InputEdges::value_type;
+  std::size_t edge_offset =
+      hybridMST::VID_UNDEFINED; // the edge offset is not really needed here
+                                // as we only use the compre
+  const hybridMST::DifferenceEncodedGraph<InputWEdgeType, hybridMST::WEdgeId>
+      compressed_input_graph(input_edges, ctx.threads_per_mpi_process(),
+                             edge_offset, range);
+
+  // only an additional check to ensure that the input is not modified
+  {
+    InputEdges input_edges_ = compressed_input_graph.get_WEdgeInSTDVector();
+    if (input_edges_ != input_edges) {
+      for (std::size_t i = 0; i < input_edges.size(); ++i) {
+        if (!(input_edges_[i] == input_edges[i])) {
+          std::cout << input_edges_[i] << " " << input_edges[i] << std::endl;
+        }
+      }
+      PRINT_WARNING_AND_ABORT("input edges not equal! ... aborting now");
+    }
+    input_edges = std::move(input_edges_);
+  }
+
   const auto algo =
       hybridMST::benchmarks::algorithms.get_enum(params.algo_params.algo);
-  const auto local_kernelization_level =
-      params.algo_params.local_kernelization_level;
-  const auto filter_threshold = params.algo_params.filter_threshold;
+
+  hybridMST::AlgorithmConfig<WEdgeType, WEdgeIdType> config;
+
   hybridMST::get_timer().reset();
   hybridMST::get_communication_tracker().reset();
   for (std::size_t i = 0; i < params.iterations; ++i) {
+    input_edges = compressed_input_graph.get_WEdgeInSTDVector();
     hybridMST::WEdgeList mst_edges;
+
+    config.local_preprocessing = static_cast<hybridMST::LocalPreprocessing>(
+        params.algo_params.local_kernelization_level);
+    config.compression = static_cast<hybridMST::Compression>(
+        params.algo_params.compression_level);
+    config.filter_threshold = params.algo_params.filter_threshold;
+
+    if (params.print_input && i == 0) {
+      SEQ_EX(ctx, PRINT_VECTOR(input_edges););
+    }
+    REORDERING_BARRIER
     hybridMST::get_timer().start("mst_complete", i);
     REORDERING_BARRIER
+
     switch (algo) {
     case hybridMST::benchmarks::Algorithm::hybridBoruvka: {
-      mst_edges =
-          hybridMST::boruvka(compressed_graph, compressed_graph.get_range(),
-                             local_kernelization_level);
+      mst_edges = hybridMST::boruvka(std::move(input_edges), config);
       break;
     }
     case hybridMST::benchmarks::Algorithm::filter_hybridBoruvka: {
-      mst_edges = hybridMST::filter_boruvka(
-          compressed_graph, compressed_graph.get_range(),
-          local_kernelization_level, filter_threshold);
+      mst_edges = hybridMST::filter_boruvka(std::move(input_edges), config);
       break;
     }
     default: {
@@ -148,9 +221,9 @@ void run_experiments(const hybridMST::benchmarks::CmdParameters& params,
     const std::uint64_t num_mst_edges =
         hybridMST::mpi::allreduce_sum(mst_edges.size());
     const std::uint64_t num_edges =
-        hybridMST::mpi::allreduce_sum(compressed_graph.num_local_edges());
-    const std::uint64_t num_vertices =
-        hybridMST::mpi::allreduce_max(compressed_graph.get_range().second + 1);
+        hybridMST::mpi::allreduce_sum(compressed_input_graph.num_local_edges());
+    const std::uint64_t num_vertices = hybridMST::mpi::allreduce_max(
+        compressed_input_graph.get_range().second + 1);
     std::stringstream sstream;
     if (ctx.rank() == 0)
       sstream << " run finished; weight MSF:" << sum_weights
@@ -162,14 +235,15 @@ void run_experiments(const hybridMST::benchmarks::CmdParameters& params,
     setting << params;
     bool is_result_wrong = false;
     if (params.do_check) {
-      auto edges = compressed_graph.get_WEdgeList();
+      auto edges = compressed_input_graph.get_WEdgeList();
       if (!hybridMST::benchmarks::check(mst_edges, edges)) {
         sstream << "wrong result" << std::endl;
+        if (ctx.rank() == 0) {
+          std::cerr << "wrong result" << std::endl;
+        }
         is_result_wrong = true;
       }
     }
-    auto comm_volume = hybridMST::get_communication_tracker()
-                           .collect(); // has to be done before timer collection
     sstream << hybridMST::get_timer().output(setting.str());
     sstream << hybridMST::get_communication_tracker().output();
     const std::string content_to_print = sstream.str();
@@ -198,47 +272,54 @@ void run_experiments(const hybridMST::benchmarks::CmdParameters& params) {
   hybridMST::get_timer().stop("gen");
   // SEQ_EX(ctx, PRINT_CONTAINER_WITH_INDEX(edges););
   const std::size_t n = hybridMST::mpi::allreduce_max(range.second) + 1;
-  const std::size_t edge_offset =
-      hybridMST::mpi::exscan_sum(edges.size(), ctx, 0ul);
+  const bool use_small_edge_weights =
+      params.graph_params.max_edge_weight <= 255u;
+  const bool VIds_fit_in_32_bit_with_small_weights =
+      n < (1ull << 32) && use_small_edge_weights;
+  const bool VIds_fit_in_40_bit_with_small_weights =
+      n < (1ull << 40) && use_small_edge_weights;
+  const bool VIds_fit_in_48_bit_with_small_weights =
+      n < (1ull << 48) && use_small_edge_weights;
   const bool VIds_fit_in_32_bit = n < (1ull << 32);
-  const bool VIds_fit_in_40_bit = n < (1ull << 40);
-  const bool VIds_fit_in_48_bit = n < (1ull << 48);
+  if (VIds_fit_in_32_bit_with_small_weights) {
+    using EdgeType = hybridMST::WEdge_4_1;
+    hybridMST::print_on_root("used edge type: " +
+                             hybridMST::get_edge_type_name<EdgeType>());
+    run_experiments<decltype(edges), EdgeType, hybridMST::WEdgeId_4_1_7>(
+        std::move(edges), range, params);
+    return;
+  }
+  if (VIds_fit_in_40_bit_with_small_weights) {
+    using EdgeType = hybridMST::WEdge_5_1;
+    hybridMST::print_on_root("used edge type: " +
+                             hybridMST::get_edge_type_name<EdgeType>());
+    run_experiments<decltype(edges), EdgeType, hybridMST::WEdgeId_6_1_7>(
+        std::move(edges), range, params);
+    return;
+  }
+  if (VIds_fit_in_48_bit_with_small_weights) {
+    using EdgeType = hybridMST::WEdge_6_1;
+    hybridMST::print_on_root("used edge type: " +
+                             hybridMST::get_edge_type_name<EdgeType>());
+    run_experiments<decltype(edges), EdgeType, hybridMST::WEdgeId_6_1_7>(
+        std::move(edges), range, params);
+    return;
+  }
   if (VIds_fit_in_32_bit) {
-    // hybridMST::wait_for_user("compressed graph");
-    hybridMST::DifferenceEncodedGraph<hybridMST::WEdge10, hybridMST::WEdgeId16>
-        compressed_graph(edges, ctx.threads_per_mpi_process(), edge_offset,
-                         range);
-    // PRINT_VAR(compressed_graph.get_range());
-    // hybridMST::verify_compressed_construction<
-    //     decltype(edges), hybridMST::WEdge10, hybridMST::WEdgeId16>(edges,
-    //                                                                range);
-    // hybridMST::wait_for_user("compressed graph");
-    hybridMST::dump(edges);
-    // hybridMST::wait_for_user("after dump graph");
-    run_experiments(params, compressed_graph);
+    using EdgeType = hybridMST::WEdge_4_4;
+    hybridMST::print_on_root("used edge type: " +
+                             hybridMST::get_edge_type_name<EdgeType>());
+    run_experiments<decltype(edges), EdgeType, hybridMST::WEdgeId_4_4_8>(
+        std::move(edges), range, params);
     return;
   }
-  if (VIds_fit_in_40_bit) {
-    hybridMST::DifferenceEncodedGraph<hybridMST::WEdge12, hybridMST::WEdgeId20>
-        compressed_graph(edges, ctx.threads_per_mpi_process(), edge_offset,
-                         range);
-    { auto dump = std::move(edges); }
-    run_experiments(params, compressed_graph);
-    return;
-  }
-  //if (VIds_fit_in_48_bit) {
-  //  hybridMST::DifferenceEncodedGraph<hybridMST::WEdge14, hybridMST::WEdgeId24>
-  //      compressed_graph(edges, ctx.threads_per_mpi_process(), edge_offset,
-  //                       range);
-  //  { auto dump = std::move(edges); }
-  //  run_experiments(params, compressed_graph);
-  //  return;
-  //}
-  //hybridMST::DifferenceEncodedGraph<hybridMST::WEdge, hybridMST::WEdgeId>
-  //    compressed_graph(edges, ctx.threads_per_mpi_process(), edge_offset,
-  //                     range);
-  //{ auto dump = std::move(edges); }
-  //run_experiments(params, compressed_graph);
+  // default case
+  using EdgeType = hybridMST::WEdge;
+  hybridMST::print_on_root("used edge type: " +
+                           hybridMST::get_edge_type_name<EdgeType>());
+  run_experiments<decltype(edges), EdgeType, hybridMST::WEdgeId>(
+      std::move(edges), range, params);
+
   return;
 }
 
@@ -252,7 +333,7 @@ void run_experiments_main(hybridMST::benchmarks::CmdParameters params) {
   if (ctx.rank() == 0) {
     std::cout << configs.size() << std::endl;
   }
-  for (const auto config : configs) {
+  for (const auto& config : configs) {
     if (ctx.rank() == 0) {
       std::cout << config.graphtype << std::endl;
     }
@@ -267,8 +348,6 @@ void run_experiments_verification(
   hybridMST::get_timer().start("gen");
   hybridMST::get_timer().stop("gen");
   hybridMST::mpi::MPIContext ctx;
-  const auto algo =
-      hybridMST::benchmarks::algorithms.get_enum(params.algo_params.algo);
   std::size_t log_n_start = params.graph_params.log_n;
   std::size_t log_m_start = params.graph_params.log_m;
   std::size_t max_edge_weight_start = params.graph_params.max_edge_weight;
@@ -287,12 +366,9 @@ void run_experiments_verification(
 }
 int main(int argc, char* argv[]) {
   using namespace hybridMST;
-
-  auto [a, b] = std::make_pair(1, 2);
   auto start = std::chrono::steady_clock::now();
   bool is_rank_0 = false;
-  hybridMST::mpi::MPIContext ctx;
-  const auto params = read_cmdline(argc, argv);
+  hybridMST::mpi::MPIContext ctx; // calls MPI_Init internally
   const double start_mpi = MPI_Wtime();
   if (ctx.rank() == 0) {
     is_rank_0 = true;

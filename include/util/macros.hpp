@@ -10,6 +10,8 @@
 #include <utility>
 #include <vector>
 
+#include "mpi/context.hpp"
+
 //#include "build_config.h"
 
 namespace hybridMST::internal {
@@ -175,6 +177,25 @@ inline void print_(const std::string& name, const std::pair<T, U>& t) {
 // distMST::internal::print_peid_vector_non_tuple(#X, X)
 #define PRINT_VAR(X) hybridMST::internal::print_(#X, X)
 #define SEQ_EX(CTX, CODE) CTX.execute_in_order([&]() { CODE })
+
+#define PRINT_WARNING(msg) {                                                    \
+    std::stringstream ss;                                                       \
+    hybridMST::mpi::MPIContext internal_ctx;                                               \
+    ss << "WARNING at " << LOCATION_INFO << "\n\t" <<  msg;                     \
+    if(internal_ctx.rank() == 0) {                                              \
+      std::cout << ss.str() << std::endl;                                       \
+    }                                                                           \
+}
+
+#define PRINT_WARNING_AND_ABORT(msg) {                                          \
+    std::stringstream ss;                                                       \
+    hybridMST::mpi::MPIContext internal_ctx;                                    \
+    ss << "WARNING at " << LOCATION_INFO << "\n\t" <<  msg;                     \
+    if(internal_ctx.rank() == 0) {                                              \
+      std::cout << ss.str() << std::endl;                                       \
+    }                                                                           \
+    std::abort();                                                               \
+}
 
 #undef USE_ASSERTIONS_
 #ifdef USE_ASSERTIONS_

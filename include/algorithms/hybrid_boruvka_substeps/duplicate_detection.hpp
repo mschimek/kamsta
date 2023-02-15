@@ -12,14 +12,9 @@ struct EdgeProcessor {
 
     mpi::MPIContext ctx;
 
-    auto src_dst_equal = [](const EdgeType& lhs, const EdgeType& rhs) {
-      return lhs.get_src() == rhs.get_src() && lhs.get_dst() == rhs.get_dst();
-    };
     get_timer().start("remove_duplicate_edges_remove", round);
-
     auto filtered_edges = parlay::filter(
         edges, [&](const EdgeType& e) { return e.get_src() != e.get_dst(); });
-    // SEQ_EX(ctx, PRINT_CONTAINER_WITH_INDEX(filtered_edges););
     parallel_for(0, filtered_edges.size(),
                  [&](const auto& i) { edges[i] = filtered_edges[i]; });
     edges.erase(edges.begin() + filtered_edges.size(), edges.end());
@@ -119,7 +114,7 @@ struct ParallelEdgeRemovalViaSampling {
         std::max(std::size_t(1000), std::size_t(graph.edges().size() * 0.005));
     non_init_vector<EdgeType> sample(sample_size);
     for (std::size_t i = 0; i < sample_size; ++i) {
-      const auto idx = sample[i] = graph.edges()[distrib(gen)];
+      sample[i] = graph.edges()[distrib(gen)];
     }
     ips4o::parallel::sort(sample.begin(), sample.end(),
                           WeightOrder<EdgeType>{});
@@ -129,14 +124,12 @@ struct ParallelEdgeRemovalViaSampling {
 
   template <typename Graph, typename IsLocal>
   static void remove_duplicates(Graph& graph, IsLocal& is_local, VId v_min) {
-    using EdgeType = typename Graph::EdgeType;
     Weight pivot = determine_pivot(graph);
     auto initial_filter = [&](const auto& edge) {
       const auto& w = edge.get_weight();
       return (is_local(edge) & (w <= pivot));
     };
     auto sample_edges = parlay::filter(graph.edges(), initial_filter);
-    const auto initial_sample_size = sample_edges.size();
     EdgeProcessor::remove_duplicates_impl(sample_edges, 0);
     std::unordered_set<VId> set;
     for (const auto& sample_edge : sample_edges) {
@@ -148,7 +141,6 @@ struct ParallelEdgeRemovalViaSampling {
       return !is_local(edge) || (set.find(combined_id) == set.end());
     };
     auto edges_not_in_sample = parlay::filter(graph.edges(), filter);
-    const auto initial_edge_size = graph.edges().size();
     non_init_vector<typename Graph::EdgeType> edges(edges_not_in_sample.size() +
                                                     sample_edges.size());
     parallel_for(0, sample_edges.size(),

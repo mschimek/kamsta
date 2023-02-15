@@ -1,15 +1,17 @@
 #pragma once
 
-#include "RQuick/RQuick.hpp"
-#include <mpi/alltoall_combined.hpp>
-#include <mpi/broadcast.hpp>
-#include <mpi/grid_communicators.hpp>
-#include <mpi/scan.hpp>
-#include <mpi/type_handling.hpp>
 #include <random>
-#include <util/timer.hpp>
-#include <util/utils.hpp>
 #include <vector>
+
+#include "RQuick/RQuick.hpp"
+
+#include "mpi/alltoall_combined.hpp"
+#include "mpi/broadcast.hpp"
+#include "mpi/scan.hpp"
+#include "mpi/twolevel_columnmajor_communicator.hpp"
+#include "mpi/type_handling.hpp"
+#include "util/timer.hpp"
+#include "util/utils.hpp"
 
 namespace hybridMST {
 namespace sorting_internal {
@@ -31,11 +33,11 @@ std::vector<ValueType> get_samples(Container& elements,
 
 template <typename T, typename Comp>
 std::vector<T>
-select_splitters_level_1(const mpi::PowerTwoGridCommunicators& comm,
+select_splitters_level_1(const mpi::TwoLevelColumnMajorCommunicator& comm,
                          std::vector<T>& local_samples, Comp&& comp) {
   mpi::MPIContext world_ctx;
   mpi::TypeMapper<T> tm;
-  const std::size_t num_columns = comm.num_columns();
+  const std::size_t num_columns = comm.num_cols();
   int tag = 100000;
   std::mt19937_64 gen(world_ctx.rank());
   get_timer().start_phase_measurement("partition_splitters_rquick");
@@ -70,31 +72,21 @@ select_splitters_level_1(const mpi::PowerTwoGridCommunicators& comm,
   get_timer().stop_phase_measurement("partition_splitters_rest");
   get_timer().start_phase_measurement("partition_splitters_rest_allgather");
   const auto& column_ctx = comm.get_col_ctx();
-  const auto& row_ctx = comm.get_row_ctx();
   splitters = mpi::allgatherv(splitters, column_ctx);
-  if (column_ctx.rank() == 0) {
-    splitters = mpi::allgatherv(splitters, row_ctx);
-  } else {
-    splitters = mpi::allgatherv(
-        splitters,
-        row_ctx); // only for consistency in communication volume tracking
-    splitters.clear();
-  }
+  splitters = mpi::row_wise_allgatherv_on_column_data(splitters, comm);
   // SEQ_EX(world_ctx, PRINT_VAR(splitters););
-  mpi::bcast(splitters, 0, column_ctx);
   get_timer().stop_phase_measurement("partition_splitters_rest_allgather");
-  MPI_ASSERT_(splitters.size() == (row_ctx.size() - 1), "");
+  //MPI_ASSERT_(splitters.size() == (row_ctx.size() - 1), "");
   return splitters;
 }
 
 inline std::vector<PEID> pseudo_random_offsets(std::size_t num_elements,
-                                               PEID rank,
-                                               std::size_t num_rows) {
+                                               PEID rank) {
   num_elements = std::min(num_elements, static_cast<std::size_t>(1000ul));
   std::vector<PEID> offsets(num_elements);
   std::mt19937 gen(rank * 2 + 1);
-  std::uniform_int_distribution<std::size_t> offset_distribution(0,
-                                                                 num_rows - 1);
+  std::uniform_int_distribution<std::size_t> offset_distribution(
+      0, std::numeric_limits<int32_t>::max());
   for (auto& offset : offsets) {
     offset = offset_distribution(gen);
   }
@@ -106,39 +98,42 @@ template <typename Container,
 void firstlevel_partition(Container& elements, Comp comp = Comp{}) {
   using T = typename Container::value_type;
   mpi::MPIContext world_ctx;
-  const auto& grid_communicators = mpi::get_power_two_grid_communicators();
+  const auto& twolevel_comm = mpi::get_twolevel_columnmajor_communicators();
   get_timer().start_phase_measurement("partition_samples");
   const std::size_t num_needed_splitters =
-      16 * std::log2(grid_communicators.num_columns());
+      16 * std::log2(twolevel_comm.num_cols());
   const std::size_t num_local_samples = std::max(num_needed_splitters, 10ul);
   auto samples = sorting_internal::get_samples(elements, num_local_samples);
   get_timer().stop_phase_measurement("partition_samples");
   // get_timer().start_phase_measurement("partition_splitters");
-  auto splitters = sorting_internal::select_splitters_level_1(
-      grid_communicators, samples, comp);
+  auto splitters =
+      sorting_internal::select_splitters_level_1(twolevel_comm, samples, comp);
   // SEQ_EX(world_ctx, PRINT_VECTOR(splitters););
   //  get_timer().stop_phase_measurement("partition_splitters");
-  const auto offsets = pseudo_random_offsets(elements.size(), world_ctx.rank(),
-                                             grid_communicators.num_rows());
-  const std::size_t num_rows = grid_communicators.num_rows();
+  const auto offsets = pseudo_random_offsets(elements.size(), world_ctx.rank());
   auto filter = False_Predicate{};
   auto transformer = [&](const T& t, const std::size_t&) { return t; };
   auto dst_computer = [&](const T& t, const std::size_t& i) {
     const auto it =
         std::upper_bound(splitters.begin(), splitters.end(), t, comp);
     const std::size_t offset_entry = i % offsets.size();
-    return (std::distance(splitters.begin(), it) * num_rows) +
-           offsets[offset_entry];
+    const std::size_t colum_idx = std::distance(splitters.begin(), it);
+    const std::size_t min_org_rank_column =
+        twolevel_comm.min_org_rank_of_column(colum_idx);
+    const std::size_t col_size = twolevel_comm.size_of_col_with(colum_idx);
+    return min_org_rank_column + (offsets[offset_entry] % col_size);
   };
-  // auto partitioned_data = mpi::twopass_alltoallv_openmp_special(
-  //     elements, filter, transformer, dst_computer, ctx.size(),
-  //     ctx.threads_per_mpi_process());
-  auto partitioned_data =
-      mpi::alltoall_combined(std::move(elements), filter, transformer, dst_computer);
-  auto elems_per_group = allreduce_sum(partitioned_data.buffer.size(),
-                                       grid_communicators.get_col_ctx());
-  // SEQ_EX(world_ctx, if(twolevel_comm.get_col_ctx().rank() == 0) {
-  // PRINT_VAR(elems_per_group);});
+  auto partitioned_data = mpi::alltoall_combined(std::move(elements), filter,
+                                                 transformer, dst_computer);
+  constexpr bool debug = false;
+  if constexpr (debug) {
+    auto elems_per_group = allreduce_sum(partitioned_data.buffer.size(),
+                                         twolevel_comm.get_col_ctx());
+    SEQ_EX(
+        world_ctx, if (twolevel_comm.get_col_ctx().rank() == 0) {
+          PRINT_VAR(elems_per_group);
+        });
+  }
   elements = std::move(partitioned_data.buffer);
 }
 
@@ -146,11 +141,10 @@ template <typename Container,
           typename Comp = std::less<typename Container::value_type>>
 void secondlevel_partition(Container& elements, Comp comp = Comp{}) {
   using T = typename Container::value_type;
-  const auto& grid_communicators = mpi::get_power_two_grid_communicators();
+  const auto& twolevel_comm = mpi::get_twolevel_columnmajor_communicators();
 
-  auto samples = get_samples(elements, grid_communicators.get_col_ctx());
-  auto splitters =
-      select_splitters(samples, comp, grid_communicators.get_col_ctx());
+  auto samples = get_samples(elements, twolevel_comm.get_col_ctx());
+  auto splitters = select_splitters(samples, comp, twolevel_comm.get_col_ctx());
   auto filter = False_Predicate{};
   auto transformer = [&](const T& t, const std::size_t&) { return t; };
   auto dst_computer = [&](const T& t, const std::size_t&) {
@@ -160,7 +154,7 @@ void secondlevel_partition(Container& elements, Comp comp = Comp{}) {
   };
   auto partitioned_data = mpi::twopass_alltoallv_openmp_special(
       std::move(elements), filter, transformer, dst_computer,
-      grid_communicators.get_col_ctx());
+      twolevel_comm.get_col_ctx());
   elements = std::move(partitioned_data.buffer);
 }
 } // namespace sorting_internal
@@ -168,11 +162,16 @@ void secondlevel_partition(Container& elements, Comp comp = Comp{}) {
 template <typename Container,
           typename Comp = std::less<typename Container::value_type>>
 void twolevel_partition(Container& elements, Comp comp = Comp{}) {
-  using T = typename Container::value_type;
+  const bool debug = false;
+  if constexpr (debug) {
+    mpi::MPIContext ctx;
+    const auto& twolevel_comm = mpi::get_twolevel_columnmajor_communicators();
+    SEQ_EX(ctx, std::cout << "(" << twolevel_comm.row_index() << ", "
+                          << twolevel_comm.col_index() << std::endl;);
+  }
+
   sorting_internal::firstlevel_partition(elements, comp);
   sorting_internal::secondlevel_partition(elements, comp);
-  mpi::MPIContext ctx;
-  // SEQ_EX(ctx, PRINT_VAR(elements.size()););
 }
 
 template <typename Container,

@@ -28,7 +28,6 @@ auto alltoall_combined(Container&& data, Filter&& filter,
                        DstCalculator&& dstCalculator) {
 
   if (use_two_level_alltoall(data, std::forward<Filter>(filter))) {
-    constexpr bool extract_payload = true;
     return two_level_alltoall_extract(
         std::forward<Container>(data), std::forward<Filter>(filter),
         std::forward<Transformer>(transformer),

@@ -59,7 +59,8 @@ inline EnumMapper<Algorithm> algorithms{
 inline EnumMapper<graphs::DistanceType> distance_types{
     std::make_pair(graphs::DistanceType::Random, std::string("RANDOM")),
     std::make_pair(graphs::DistanceType::Euclidean, std::string("EUCLIDEAN")),
-    std::make_pair(graphs::DistanceType::SquaredEuclidean, std::string("SQUARED_EUCLIDEAN"))};
+    std::make_pair(graphs::DistanceType::SquaredEuclidean,
+                   std::string("SQUARED_EUCLIDEAN"))};
 
 struct GraphParameters {
   std::string graphtype = graphtypes.get_string(GraphType::GNM);
@@ -73,13 +74,15 @@ struct GraphParameters {
   bool is_weak_scaled_num_mpi_procs =
       false; // if weak scaling is enabled, n and m are global but per mpi
              // process
-  std::string distance_type = distance_types.get_string(graphs::DistanceType::Random);
+  std::string distance_type =
+      distance_types.get_string(graphs::DistanceType::Random);
   std::size_t max_edge_weight = 254;
 };
 
 struct AlgoParameters {
   std::string algo = algorithms.get_string(Algorithm::hybridBoruvka);
   std::size_t local_kernelization_level = 1;
+  std::size_t compression_level = 0;
   std::size_t filter_threshold = 4; // only relevant for filter approach
 };
 
@@ -110,16 +113,13 @@ compute_numbers_rmat(const GraphParameters& params) {
   return std::make_pair(params.log_n, params.log_m - log_mpi_procs);
 }
 
-inline std::pair<WEdgeList14, VertexRange>
+inline std::pair<WEdgeList, VertexRange>
 generate_graph(const GraphParameters& params) {
   mpi::MPIContext ctx;
   auto graphtype = graphtypes.get_enum(params.graphtype);
-  if (params.max_edge_weight > 254 && ctx.rank() == 0) {
-    std::cout << "edge weights are too big" << std::endl;
-  }
   const auto distance_type = distance_types.get_enum(params.distance_type);
-  const graphs::WeightGeneratorConfig<uint8_t> wgen_config{
-      1, std::uint8_t(params.max_edge_weight), distance_type,
+  const graphs::WeightGeneratorConfig<uint32_t> wgen_config{
+      1, std::uint32_t(params.max_edge_weight), distance_type,
       std::size_t(ctx.rank())};
 
   switch (graphtype) {
@@ -192,7 +192,7 @@ generate_graph(const GraphParameters& params) {
   //   return hybridMST::read_unweighted_graph(params.infile); // Todo replace
   // }
   default: {
-    return std::make_pair(WEdgeList14{},
+    return std::make_pair(WEdgeList{},
                           VertexRange{VID_UNDEFINED, VID_UNDEFINED});
   }
   }
@@ -203,6 +203,7 @@ struct CmdParameters {
   AlgoParameters algo_params;
   std::size_t iterations = 1;
   bool do_check = false;
+  bool print_input = false;
   std::size_t debug_level = 0;
   std::size_t threads_per_mpi_process = 1;
   std::string outfile;
@@ -246,10 +247,10 @@ inline void detailed_analysis(hybridMST::WEdgeList actual_mst,
             << " #expected_mst: " << expected_mst.size() << std::endl;
   std::set<WEdge> actual_mst_set;
   for (const auto edge : actual_mst) {
-    actual_mst_set.emplace(edge.src, edge.dst, edge.weight);
+    actual_mst_set.emplace(edge.get_src(), edge.get_dst(), edge.get_weight());
   }
   for (const auto edge : actual_mst) {
-    WEdge rev{edge.dst, edge.src, edge.weight};
+    WEdge rev{edge.get_dst(), edge.get_src(), edge.get_weight()};
     if (actual_mst_set.count(rev) > 0) {
       std::cout << "rev: " << rev << " is contained!" << std::endl;
     }
