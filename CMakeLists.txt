@@ -13,10 +13,10 @@ find_package(TBB REQUIRED)
 find_package(OpenMP REQUIRED)
 find_package(Threads REQUIRED)
 
-add_subdirectory(external/tlx)
-add_subdirectory(external/graphs)
-add_subdirectory(external/parlay)
-add_subdirectory(external/backward)
+add_subdirectory(external/tlx EXCLUDE_FROM_ALL)
+add_subdirectory(external/graphs EXCLUDE_FROM_ALL)
+add_subdirectory(external/parlay EXCLUDE_FROM_ALL)
+add_subdirectory(external/backward EXCLUDE_FROM_ALL)
 
 add_library(growt INTERFACE)
 target_include_directories(growt SYSTEM INTERFACE external/growt/)
@@ -72,6 +72,3 @@ add_library(timer ${CMAKE_CURRENT_SOURCE_DIR}/include/util/timer.cpp)
 target_link_libraries(timer PRIVATE base_target)
 
 add_subdirectory(benchmarks)
-
-
-
