@@ -23,10 +23,10 @@ Furthermore, it is important that `OMP_NUM_THREADS` matches the kamsta parameter
 If you use multithreading, you should consider allocating enough CPUs per MPI process to avoid performance problems.
 
 ## Notes
-Note that due to restrictions in the graph generator we tested our implementation only with number of threads and number of mpi processes being power of two.
-We tested our implementation with gcc 10-12 and OpenMPI 4.0.
+Note that due to restrictions in the graph generator, we tested our implementation only with number of threads and number of mpi processes being power of two.
+We tested our implementation with GCC 10/11/12 and OpenMPI 4.0.
 
 If you encounter problems, feel free to contact us or open a pull request.
 
 ## Dependencies
-Apart from the included submodolues we use `OpenMP` and `Thread Building Blocks`(TBB).
+Apart from the included submodules we use `OpenMP` and `Thread Building Blocks`(TBB).
