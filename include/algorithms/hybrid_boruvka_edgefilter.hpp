@@ -236,7 +236,7 @@ inline void boruvka_recursive(
     non_init_vector<EdgeType>& edges, ParentArray& parent_array,
     non_init_vector<GlobalEdgeId>& mst_edge_ids, Weight threshold_weight,
     LabelCache& cache, std::size_t filter_threshold,
-    non_init_vector<EdgeType>& leftover_edges, LeftoverManager& leftover_manager, bool stop_recursion = false) {
+    non_init_vector<EdgeType>& leftover_edges, LeftoverManager& leftover_manager, std::size_t initial_global_n, bool stop_recursion = false) {
   mpi::MPIContext ctx;
   const auto id_copy = id;
   ++id;
@@ -246,7 +246,7 @@ inline void boruvka_recursive(
   if (no_more_edges || no_more_vertices) {
     return;
   }
-  const double avg_degree = global_m / static_cast<double>(global_n);
+  const double avg_degree = global_m / static_cast<double>(initial_global_n);
   const std::size_t threshold_size_edges = 1000;
   const bool is_graph_small = global_m <= (ctx.size() * threshold_size_edges);
   if (avg_degree <= filter_threshold || stop_recursion || is_graph_small) {
@@ -283,7 +283,7 @@ inline void boruvka_recursive(
   leftover_manager.recurse_left();
   boruvka_recursive(round, depth + 1, global_n, global_m_light_edges,
                     light_half, parent_array, mst_edge_ids, threshold_weight,
-                    cache, filter_threshold, leftover_edges, leftover_manager, stop_recursion);
+                    cache, filter_threshold, leftover_edges, leftover_manager, initial_global_n, stop_recursion);
   leftover_manager.come_back();
   get_timer().start("boruvka_recursive_setup", round);
   dump(light_half);
@@ -322,7 +322,7 @@ inline void boruvka_recursive(
   if(perform_recursion) {
   boruvka_recursive(round, depth + 1, global_n_filtered, global_m_filtered,
                     edges, parent_array, mst_edge_ids, pivot, cache, filter_threshold,
-                    leftover_edges, leftover_manager);
+                    leftover_edges, leftover_manager, initial_global_n);
   } else {
     leftover_edges = std::move(edges);
   }
@@ -406,7 +406,7 @@ inline WEdgeList filter_boruvka(const CompressedGraph& compressed_graph,
   LeftoverManager leftover_manager;
   boruvka_recursive(round, depth, global_n, global_m, augmented_edges,
                     parent_array, mst_edge_ids, 0, cache, filter_threshold,
-                    leftover_edges, leftover_manager);
+                    leftover_edges, leftover_manager, global_n);
   // SEQ_EX(ctx, PRINT_VAR(mst_edge_ids.size()););
   get_timer().start("send_mst_edges_back");
   dump(augmented_edges);
