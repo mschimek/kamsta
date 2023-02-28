@@ -1,0 +1,15 @@
+echo "[LOG] Starting ${jobname} writing logs to ${output_log} and ${error_log}"
+start=$$(date +%s.%N)
+
+PARLAY_NUM_THREADS=${num_threads} OMP_NUM_THREADS=${num_threads} mpiexec  \
+  -n ${num_mpi_procs}                                                     \
+  --map-by node:PE=${num_cpus_per_mpi_proc}                               \
+  --bind-to core                                                          \
+  ${cmd} >>${output_log} 2>>${error_log}
+
+end=$$(date +%s.%N)
+diff=$$(echo "$end - $start" | bc)
+echo "[LOG] Finished ${jobname} in $${diff} seconds"
+sleep ${sleep_duration}
+
+
