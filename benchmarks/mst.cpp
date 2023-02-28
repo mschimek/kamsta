@@ -8,7 +8,6 @@
 #include <unordered_map>
 #include <vector>
 
-
 #include <omp.h>
 #include <tbb/concurrent_vector.h>
 #include <tbb/global_control.h>
@@ -17,7 +16,7 @@
 #include "build_config.hpp"
 
 #ifdef USE_BACKWARD_CPP
-  #include "backward.hpp"
+#include "backward.hpp"
 #endif
 
 #include "ips4o/ips4o.hpp"
@@ -37,7 +36,6 @@
 #include "util/communication_volume_measurements.hpp"
 #include "util/macros.hpp"
 #include "util/timer.hpp"
-
 
 inline hybridMST::benchmarks::CmdParameters read_cmdline(int argc,
                                                          char* argv[]) {
@@ -112,6 +110,13 @@ inline hybridMST::benchmarks::CmdParameters read_cmdline(int argc,
       break;
     default:
       ctx.abort("problem with weak scaling argument");
+  }
+  const char* omp_num_threads_read = std::getenv("OMP_NUM_THREADS");
+  const int omp_num_threads_converted = std::atoi(omp_num_threads_read);
+  if (omp_num_threads_converted != int(params.threads_per_mpi_process)) {
+    ctx.abort("OMP_NUM_THREADS is " +
+              std::to_string(omp_num_threads_converted) + " but --threads is" +
+              std::to_string(params.threads_per_mpi_process));
   }
   ctx.set_threads_per_mpi_process(
       static_cast<int>(params.threads_per_mpi_process));
