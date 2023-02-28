@@ -1,3 +1,4 @@
 #pragma once
 
 #cmakedefine USE_EXPLICIT_INSTANTIATION
+#cmakedefine USE_BACKWARD_CPP

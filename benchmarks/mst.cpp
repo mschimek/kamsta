@@ -8,12 +8,18 @@
 #include <unordered_map>
 #include <vector>
 
+
 #include <omp.h>
 #include <tbb/concurrent_vector.h>
 #include <tbb/global_control.h>
 #include <tbb/parallel_for.h>
 
-#include "backward.hpp"
+#include "build_config.hpp"
+
+#ifdef USE_BACKWARD_CPP
+  #include "backward.hpp"
+#endif
+
 #include "ips4o/ips4o.hpp"
 #include "read_config_file.hpp"
 #include "tlx/cmdline_parser.hpp"
@@ -32,7 +38,6 @@
 #include "util/macros.hpp"
 #include "util/timer.hpp"
 
-#include "build_config.hpp"
 
 inline hybridMST::benchmarks::CmdParameters read_cmdline(int argc,
                                                          char* argv[]) {
@@ -375,9 +380,11 @@ int main(int argc, char* argv[]) {
     std::cout << "MPI_Initialize" << std::endl;
   }
   {
+#ifdef USE_BACKWARD_CPP
     backward::MPIErrorHandler mpi_error_handler(MPI_COMM_WORLD);
     // enable backward for non-MPI failures
     backward::SignalHandling sh;
+#endif
 
     auto params = read_cmdline(argc, argv);
     // run_experiments_verification(params);
