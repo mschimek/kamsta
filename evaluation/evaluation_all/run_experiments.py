@@ -27,9 +27,9 @@ def generate_path_to_config_file(platform):
 def main():
     parser = argparse.ArgumentParser()
 
-    parser.add_argument('--experiment_parent_directory', required=True)
-    parser.add_argument('--experiment_name', required=True)
-    parser.add_argument('--experiment_suite', required=True)
+    parser.add_argument('--experiment_parent_directory', required=True, help="path to directory where the experiment result subdirectory will be created.")
+    parser.add_argument('--experiment_name', required=True, help="name of the experiment result subdirectory.")
+    parser.add_argument('--experiment_suite', required=True, help="experiment suite that will be executed in this experiment.")
     parser.add_argument('--platform', type=Platform, choices=list(Platform), required=True)
 
     args = parser.parse_args()
