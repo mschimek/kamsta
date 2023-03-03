@@ -1,16 +1,15 @@
-echo "[LOG] Starting ${jobname}"
-start=$$(date +%s.%N)
+#!/bin/bash
+load_gcc_config() {
+  module purge
+    module load admin/1.0
+    module load tempdir/1.0
+    module load lrz/1.0
+    module load spack/21.1.1
+    module load cmake/3.16.5
 
-PARLAY_NUM_THREADS=${num_threads} OMP_NUM_THREADS=${num_threads} mpiexec  \
-  -n ${num_mpi_procs}                                                     \
-  --map-by ppr:${num_mpi_procs_per_node}                                  \
-  --map-by node:PE=${num_cpus_per_mpi_proc}                               \
-  --bind-to core                                                          \
-  ${cmd}                                       
-
-end=$$(date +%s.%N)
-diff=$$(echo "$end - $start" | bc)
-echo "[LOG] Finished ${jobname} in $${diff} seconds"
-sleep ${sleep_duration}
-
+    module load gcc/10.2.0
+    module load intel-tbb/2020.3
+    module load openmpi/4.0.4-gcc8
+    module load boost/1.73.0-gcc8
+}
 
