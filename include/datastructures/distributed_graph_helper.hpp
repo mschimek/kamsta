@@ -1,13 +1,9 @@
 #pragma once
 
 #include <algorithm>
-#include <execution>
 
 #include <ips4o/ips4o.hpp>
 #include <parlay/hash_table.h>
-#include <tbb/concurrent_hash_map.h>
-#include <tbb/parallel_for.h>
-#include <tbb/parallel_reduce.h>
 #include <util/macros.hpp>
 
 #include "datastructures/growt.hpp"

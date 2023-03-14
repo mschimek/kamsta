@@ -1,7 +1,6 @@
 #pragma once
 
 #include <new>
-#include <tbb/cache_aligned_allocator.h>
 
 #include <numeric>
 #include <tuple>
@@ -9,7 +8,6 @@
 #include <utility>
 
 #include "parlay/hash_table.h"
-#include <tbb/parallel_for.h>
 
 #include "definitions.hpp"
 #include "mpi/context.hpp"
@@ -17,10 +15,6 @@
 #include "util/timer.hpp"
 
 namespace hybridMST {
-
-namespace TBB {
-using IndexRange = ::tbb::blocked_range<std::size_t>;
-}
 
 template <typename T> class Span {
 public:

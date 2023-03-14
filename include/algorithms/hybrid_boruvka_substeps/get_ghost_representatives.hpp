@@ -1,7 +1,6 @@
 #pragma once
 
 #include "datastructures/growt.hpp"
-#include <tbb/concurrent_hash_map.h>
 
 #include "definitions.hpp"
 #include "mpi/alltoall.hpp"
@@ -10,11 +9,7 @@
 #include "mpi/scan.hpp"
 #include "util/utils.hpp"
 
-template <typename T> class TD;
 namespace hybridMST {
-
-template <typename Key, typename Value>
-using ConcurrentHashtable = tbb::concurrent_hash_map<Key, Value>;
 
 struct ExchangeRepresentativesPush_Sort {
   using TaskBeginEnd = std::pair<std::size_t, std::size_t>;
@@ -36,14 +31,14 @@ struct ExchangeRepresentativesPush_Sort {
   /// edges from u to v and the filtering process has not discarded e (as the
   /// other (u,v) are located on another PE)
   template <typename Edges, typename Locator>
-  static void
-  process_batch_sorting(TaskBeginEnd task, non_init_vector<PEID>& dst_pe,
-                        const Edges& edges, const Locator& locator) {
+  static void process_batch_sorting(TaskBeginEnd task,
+                                    non_init_vector<PEID>& dst_pe,
+                                    const Edges& edges,
+                                    const Locator& locator) {
     mpi::MPIContext ctx;
     const auto& [begin, end] = task;
     const bool is_task_empty = begin == end;
-    if (is_task_empty)
-      return;
+    if (is_task_empty) return;
     VId prev_v = edges[begin].get_src();
     const PEID sentinel = -1;
     PEID prev_pe = sentinel;
@@ -51,7 +46,7 @@ struct ExchangeRepresentativesPush_Sort {
     for (std::size_t i = begin; i < end; ++i) {
       const auto& cur_edge = edges[i];
       if (prev_v != cur_edge.get_src()) {
-        prev_pe = sentinel; // reset pe
+        prev_pe = sentinel;  // reset pe
       }
       const Edge back_edge{cur_edge.get_dst(), cur_edge.get_src()};
       const PEID pe = locator.get_min_pe_or_sentinel(back_edge, sentinel);
@@ -65,9 +60,8 @@ struct ExchangeRepresentativesPush_Sort {
     }
   }
 
-  [[nodiscard]] static TaskBeginEnd
-  compute_task_boundaries(std::size_t size, std::size_t num_tasks,
-                          std::size_t task_id) {
+  [[nodiscard]] static TaskBeginEnd compute_task_boundaries(
+      std::size_t size, std::size_t num_tasks, std::size_t task_id) {
     const std::size_t task_size = size / num_tasks;
     const std::size_t remainder = size % num_tasks;
     const bool is_last_task = num_tasks == 1 + task_id;
@@ -85,7 +79,6 @@ struct ExchangeRepresentativesPush_Sort {
   static auto execute(const Graph& graph,
                       const Container& new_reps_local_vertices,
                       std::size_t round) {
-
     using EdgeType = typename Graph::EdgeType;
     mpi::MPIContext ctx;
     const auto& locator = graph.locator();
@@ -145,20 +138,18 @@ struct ExchangeRepresentativesPush_Sort {
   }
 };
 struct ExchangeRepresentativesPush_Hash {
-  template <typename Buffer> static auto foo(const Buffer& rep_info) {
+  template <typename Buffer>
+  static auto foo(const Buffer& rep_info) {
     mpi::MPIContext ctx;
     growt::GlobalVIdMap<VId> grow_map{rep_info.buffer.size()};
     {
-      ::tbb::parallel_for(
-          TBB::IndexRange(0, rep_info.buffer.size()), [&](TBB::IndexRange r) {
-            for (std::size_t i = r.begin(); i != r.end(); ++i) {
-              auto& elem = rep_info.buffer[i];
-              static_assert(sizeof(VId) >= 8);
-              auto [it, _] = grow_map.insert(elem.prev_name + 1, elem.name);
-              if (it == grow_map.end())
-                std::cout << ctx.rank() << "--" << elem << std::endl;
-            }
-          });
+      parallel_for(0, rep_info.buffer.size(), [&](std::size_t i) {
+        auto& elem = rep_info.buffer[i];
+        static_assert(sizeof(VId) >= 8);
+        auto [it, _] = grow_map.insert(elem.prev_name + 1, elem.name);
+        if (it == grow_map.end())
+          std::cout << ctx.rank() << "--" << elem << std::endl;
+      });
     }
     return grow_map;
   }
@@ -234,4 +225,4 @@ struct ExchangeRepresentativesPush_Hash {
   }
 };
 
-} // namespace hybridMST
+}  // namespace hybridMST

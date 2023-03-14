@@ -1,7 +1,5 @@
 #pragma once
 
-#include <tbb/enumerable_thread_specific.h>
-
 #include <type_traits>
 
 #include "definitions.hpp"
@@ -19,7 +17,7 @@ namespace internal {
 template <typename Type>
 using Ensure64BitType =
     std::conditional_t<std::numeric_limits<Type>::is_signed, int64_t, uint64_t>;
-} // namespace internal
+}  // namespace internal
 
 template <typename Value>
 using GlobalVIdMap = typename ::growt::table_config<
@@ -40,26 +38,9 @@ decltype(auto) find(Map& map, const K& key) {
   return map.find(key + 1);
 }
 
-//template <typename Handle, typename K> decltype(auto) find(Handle& h, K key) {
-//  const uint64_t threshold = 100'000'000;
-//  if (key > threshold)
-//    std::cout << "illegal: " << key << std::endl;
-//  return h.find(key + 1);
-//}
-//template <typename Handle, typename K, typename V>
-//decltype(auto) insert(Handle& h, K key, V v) {
-//  const uint64_t threshold = 100'000'000;
-//  if (key > threshold || v > threshold)
-//    std::cout << "illegal: " << key << std::endl;
-//  return h.insert(key + 1, v + 1);
-//}
-
-template <typename Map> struct Handle {
+template <typename Map>
+struct Handle {
   Handle(Map& map) : handle(map.get_handle()) {}
   growt::GlobalVIdMap<VId>::handle_type handle;
 };
-template <typename Map> auto create_handle_ets(Map& map) {
-  return tbb::enumerable_thread_specific<growt::GlobalVIdMap<VId>::handle_type>{
-      [&]() { return map.get_handle(); }};
-}
-} // namespace hybridMST::growt
+}  // namespace hybridMST::growt

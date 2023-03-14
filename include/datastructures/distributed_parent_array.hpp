@@ -1,6 +1,5 @@
 #pragma once
 
-#include <execution>
 #include <numeric>
 
 #include "datastructures/algorithms/pointer_jumping_on_dist_array.hpp"

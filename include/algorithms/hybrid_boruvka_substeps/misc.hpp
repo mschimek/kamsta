@@ -1,6 +1,5 @@
 #pragma once
 
-#include <execution>
 #include <unordered_set>
 
 #include "../../../external/graphs/external/KaDiS/include/AmsSort/Timer/Tracker.hpp"

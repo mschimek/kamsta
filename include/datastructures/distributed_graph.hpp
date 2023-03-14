@@ -4,8 +4,6 @@
 
 #include <datastructures/sparse_distributed_graph_helpers.hpp>
 #include <ips4o/ips4o.hpp>
-#include <tbb/parallel_for.h>
-#include <tbb/parallel_reduce.h>
 
 #include "datastructures/distributed_graph_helper.hpp"
 #include "datastructures/growt.hpp"

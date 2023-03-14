@@ -26,11 +26,9 @@
 
 #pragma once
 
-#include <tbb/parallel_for.h>
 #include "gbbs_bridge/bridge.hpp"
 
 #include <algorithm>
-#include <execution>
 #include <numeric>
 #include <random>
 

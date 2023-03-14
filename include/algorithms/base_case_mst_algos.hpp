@@ -1,7 +1,6 @@
 #pragma once
 
 #include <algorithm>
-#include <execution>
 #include <numeric>
 
 #include "ips4o/ips4o.hpp"
@@ -15,7 +14,7 @@
 #include "util/timer.hpp"
 #include "util/utils.hpp"
 
-//#include "interface.hpp"
+// #include "interface.hpp"
 
 namespace hybridMST {
 
@@ -25,8 +24,7 @@ inline void local_kruskal(std::vector<WEdgeId>& edges,
   std::sort(edges.begin(), edges.end(), Compare{});
   MapBasedUnionFind uf;
   for (auto& elem : edges) {
-    if (uf.find(elem.get_src()) == uf.find(elem.get_dst()))
-      continue;
+    if (uf.find(elem.get_src()) == uf.find(elem.get_dst())) continue;
     global_edge_ids.push_back(elem.get_global_id());
     uf.unify(elem.get_src(), elem.get_dst());
   }
@@ -60,8 +58,7 @@ inline void local_kruskal(std::size_t n, std::vector<EdgeType>& edges,
     return edge.get_src() > edge.get_dst();
   };
   if constexpr (execute_in_parallel) {
-    auto end = std::remove_if(std::execution::par, edges.begin(), edges.end(),
-                              remove_f);
+    auto end = std::remove_if(edges.begin(), edges.end(), remove_f);
     edges.erase(end, edges.end());
     ips4o::parallel::sort(edges.begin(), edges.end(), Compare{});
   } else {
@@ -71,8 +68,7 @@ inline void local_kruskal(std::size_t n, std::vector<EdgeType>& edges,
   }
   UnionFind uf(n);
   for (auto& elem : edges) {
-    if (uf.find(elem.get_src()) == uf.find(elem.get_dst()))
-      continue;
+    if (uf.find(elem.get_src()) == uf.find(elem.get_dst())) continue;
     global_edge_ids.push_back(elem.global_id);
     uf.unify(elem.get_src(), elem.get_dst());
   }
@@ -108,8 +104,7 @@ inline Edges local_kruskal(Edges& edges) {
   UnionFind uf(n);
 
   for (auto& elem : edges) {
-    if (uf.find(elem.get_src()) == uf.find(elem.get_dst()))
-      continue;
+    if (uf.find(elem.get_src()) == uf.find(elem.get_dst())) continue;
     mst_edges.push_back(elem);
     uf.unify(elem.get_src(), elem.get_dst());
   }
@@ -128,8 +123,7 @@ inline WEdgeList local_kruskal(std::size_t n, WEdgeList& edges) {
   std::cout << n << std::endl;
   UnionFind uf(n);
   for (auto& elem : edges) {
-    if (uf.find(elem.get_src()) == uf.find(elem.get_dst()))
-      continue;
+    if (uf.find(elem.get_src()) == uf.find(elem.get_dst())) continue;
     mst_edges.push_back(elem);
     uf.unify(elem.get_src(), elem.get_dst());
   }
@@ -143,11 +137,11 @@ inline void gather_mst(Edges& edges,
   const PEID root = 0;
   auto recv_edges =
       hybridMST::mpi::gatherv(edges.data(), edges.size(), root, ctx);
-  if (ctx.rank() == root)
-    local_kruskal(recv_edges, global_edge_ids);
+  if (ctx.rank() == root) local_kruskal(recv_edges, global_edge_ids);
 }
 
-template <typename Edges> inline Edges gather_mst(const Edges& edges) {
+template <typename Edges>
+inline Edges gather_mst(const Edges& edges) {
   mpi::MPIContext ctx;
   const PEID root = 0;
   auto recv_edges =
@@ -155,4 +149,4 @@ template <typename Edges> inline Edges gather_mst(const Edges& edges) {
   return local_kruskal(recv_edges);
 }
 
-} // namespace hybridMST
+}  // namespace hybridMST

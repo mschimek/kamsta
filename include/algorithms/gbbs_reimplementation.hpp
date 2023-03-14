@@ -28,11 +28,9 @@
 
 #include <algorithm>
 #include <algorithms/base_case_mst_algos.hpp>
-#include <execution>
 #include <numeric>
 #include <random>
 
-#include <tbb/parallel_for.h>
 #include "gbbs_bridge/bridge.hpp"
 
 #include "parlay/delayed_sequence.h"
@@ -59,9 +57,10 @@ namespace hybridMST {
 
 namespace gbbs {
 constexpr const inline size_t kDefaultGranularity = 2048;
-} // namespace gbbs
+}  // namespace gbbs
 
-template <typename T> constexpr inline T MSD = ~(~T{0} >> 1);
+template <typename T>
+constexpr inline T MSD = ~(~T{0} >> 1);
 
 namespace gbbs_boruvka {
 ///@brief Computes the minimum edge incident to the vertices stored in vertices.
@@ -76,10 +75,8 @@ void compute_min_edges(
     VertexNormalization&& normalizer = VertexNormalization{}) {
   using namespace parlay_bridge;
   const auto comp = [](const EdgeIdWeight& lhs, const EdgeIdWeight& rhs) {
-    if (lhs.weight < rhs.weight)
-      return true;
-    if (lhs.weight == rhs.weight)
-      return lhs.edge_id < rhs.edge_id;
+    if (lhs.weight < rhs.weight) return true;
+    if (lhs.weight == rhs.weight) return lhs.edge_id < rhs.edge_id;
     return false;
   };
   hybridMST::parallel_for(0, n, [&](size_t i) {
@@ -138,10 +135,11 @@ void determine_mst_edges(std::size_t n, const MinEdges& min_edges,
 /// Note that the ids contained in new_mst_edges is relative to the order within
 /// the edges array.
 template <typename NewMstEdgesIds, typename MstEdgesIds, typename Edges>
-std::size_t
-add_new_mst_edges_to_mst_array(std::size_t n, std::size_t nb_mst_edges,
-                               NewMstEdgesIds& new_mst_edges,
-                               const Edges& edges, MstEdgesIds& mst) {
+std::size_t add_new_mst_edges_to_mst_array(std::size_t n,
+                                           std::size_t nb_mst_edges,
+                                           NewMstEdgesIds& new_mst_edges,
+                                           const Edges& edges,
+                                           MstEdgesIds& mst) {
   const std::size_t prev_n_in_mst = nb_mst_edges;
   const std::size_t nb_added_mst_edges = parlay::filterf(
       new_mst_edges.begin(), mst + prev_n_in_mst, n,
@@ -198,8 +196,8 @@ void relabel_edges(std::size_t m, EdgeIds& edge_ids, Edges& edges,
       edge.set_dst(pv);
     }
     if (pu == pv) {
-      edge_ids[i] |=
-          MSD<LocalEdgeId>; // mark self loops, so that they can be filtered out
+      edge_ids[i] |= MSD<LocalEdgeId>;  // mark self loops, so that they can be
+                                        // filtered out
     }
   });
 }
@@ -219,11 +217,12 @@ std::size_t filter_out_self_loops(std::size_t m, EdgeIds& edge_ids,
   std::swap(edge_ids, next_edge_ids);
   return m;
 }
-template <typename T> void debug_print(Span<T> data) {
+template <typename T>
+void debug_print(Span<T> data) {
   for (std::size_t i = 0; i < data.size(); ++i)
     std::cout << std::setw(10) << i << " " << data[i] << std::endl;
 }
-} // namespace gbbs_boruvka
+}  // namespace gbbs_boruvka
 
 ///@brief Computes the MST based on Boruvka's algorithm.
 ///
@@ -241,7 +240,6 @@ template <class EdgeType, class M, class P, class D>
 inline std::size_t Boruvka(Span<EdgeType> edges, VId*& vertices,
                            VId*& tmp_vertices, M& min_edges, P& parents,
                            D& exhausted, size_t& n, GlobalEdgeId* mst) {
-
   constexpr bool is_output_activated = false;
   size_t m = edges.size();
   const size_t m_initial = m;
@@ -288,8 +286,7 @@ inline std::size_t Boruvka(Span<EdgeType> edges, VId*& vertices,
 template <typename Container>
 Span<typename Container::value_type> partition(std::size_t n,
                                                Container& container) {
-  if (container.empty())
-    return Span(container.data(), 0);
+  if (container.empty()) return Span(container.data(), 0);
   if (3 * n / 2 > container.size())
     return Span(container.data(), container.size());
   const std::size_t nb_samples =
@@ -311,25 +308,26 @@ Span<typename Container::value_type> partition(std::size_t n,
                                      ? (samples.size() - 1)
                                      : sample_idx_raw;
   const Weight pivot = samples[sample_idx];
-  auto it = std::partition(
-      std::execution::par, container.begin(), container.end(),
-      [&](const auto& edge) { return edge.get_weight() <= pivot; }
+  const auto light_edges = parlay::filter(
+      container, [&](const auto& edge) { return edge.get_weight() <= pivot; });
+  const auto heavy_edges = parlay::filter(
+      container, [&](const auto& edge) { return edge.get_weight() > pivot; });
 
-  );
-  const auto size_first_partition =
-      static_cast<std::size_t>(std::distance(container.begin(), it));
-
-  // std::cout << "pivot: " << pivot
-  //           << " partition.size(): " << size_first_partition
-  //           << " container.size(): " << container.size() << std::endl;
+  parallel_for(0, light_edges.size(),
+               [&](std::size_t i) { container[i] = light_edges[i]; });
+  parallel_for(0, heavy_edges.size(), [&](std::size_t i) {
+    container[i + light_edges.size()] = heavy_edges[i];
+  });
+  const auto size_first_partition = light_edges.size();
   return Span(container.data(), size_first_partition);
 }
 
-template <typename OutContainer, typename Container, typename T = typename Container::value_type>
-OutContainer get_light_edges(std::size_t n, const T& pivot, Container& container) {
-  const auto is_light = [&](const T& edge) { edge.get_weight() <= pivot;};
-  const std::size_t num_light_edges = parlay::count_if(
-      container, is_light);
+template <typename OutContainer, typename Container,
+          typename T = typename Container::value_type>
+OutContainer get_light_edges(std::size_t n, const T& pivot,
+                             Container& container) {
+  const auto is_light = [&](const T& edge) { edge.get_weight() <= pivot; };
+  const std::size_t num_light_edges = parlay::count_if(container, is_light);
   OutContainer light_edges(num_light_edges);
   filter(container, light_edges, is_light);
   return light_edges;
@@ -424,8 +422,7 @@ inline std::vector<GlobalEdgeId> MinimumSpanningForest(std::size_t n,
         parlay::pack_index_out(parlay_bridge::make_slice(exhausted), vtx_range);
 
     parlay_bridge::parallel_for(0, n, gbbs::kDefaultGranularity, [&](size_t i) {
-      if (exhausted[i])
-        exhausted[i] = false;
+      if (exhausted[i]) exhausted[i] = false;
     });
 
     // pointer jump: vertices that were made inactive could have had their
@@ -480,4 +477,4 @@ inline void gbbs_reimplementation(std::size_t n, Span<WEdgeId> edges,
   mst_edge_ids = MinimumSpanningForest(n, edges);
   // std::cout << "found mst size: " << mst_edge_ids.size() << std::endl;
 }
-} // namespace hybridMST
+}  // namespace hybridMST

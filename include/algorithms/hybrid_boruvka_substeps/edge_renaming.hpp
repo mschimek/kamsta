@@ -1,5 +1,4 @@
 #pragma once
-#include <execution>
 
 #include "algorithms/hybrid_boruvka_substeps/is_representative_computation.hpp"
 #include "definitions.hpp"

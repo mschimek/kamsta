@@ -1,7 +1,5 @@
 #pragma once
 
-#include <execution>
-
 #include "datastructures/growt.hpp"
 #include "definitions.hpp"
 #include "is_representative_computation.hpp"
@@ -75,8 +73,6 @@ struct ComputeRepresentative_Base {
     // SEQ_EX(ctx, PRINT_VECTOR_WITH_INDEX(is_rep););
     auto s = parlay::slice(predecessors.begin() + 1, predecessors.end());
     parlay::scan_inplace(s);
-    // std::exclusive_scan(std::execution::par, predecessors.begin() + 1,
-    //                     predecessors.end(), predecessors2.begin() + 1, 0ull);
     // SEQ_EX(ctx, PRINT_VECTOR_WITH_INDEX(predecessors););
     map(predecessors.begin() + 1, predecessors.end(),
         [&](VId& v, const std::size_t&) { v += global_prefix; });

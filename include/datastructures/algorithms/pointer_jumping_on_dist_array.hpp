@@ -1,7 +1,6 @@
 #pragma once
 
 #include <algorithm>
-#include <execution>
 
 #include "datastructures/distributed_array.hpp"
 #include "definitions.hpp"
@@ -10,10 +9,24 @@
 
 namespace hybridMST {
 
-template <typename T> struct ParallelPointerJumping {
+template <typename T>
+struct ParallelPointerJumping {
 
-  static non_init_vector<std::size_t>
-  get_global_idxs_to_jump_from(DistributedArray<T>& array) {
+  static Span<std::size_t> keep_non_root_elemens(
+      const DistributedArray<T>& array,
+      Span<std::size_t> global_idx_to_jump_from) {
+    auto non_root_entries =
+        parlay::filter(global_idx_to_jump_from, [&](std::size_t v_global) {
+          const T value = array.get_value_locally(v_global);
+          return !is_MSB_set(value);
+        });
+    parallel_for(0, non_root_entries.size(), [&](std::size_t i) {
+      global_idx_to_jump_from[i] = non_root_entries[i];
+    });
+    return Span(global_idx_to_jump_from.data(), non_root_entries.size());
+  }
+  static non_init_vector<std::size_t> get_global_idxs_to_jump_from(
+      DistributedArray<T>& array) {
     using CachelineAlignedInt = CachelineAlignedType<std::size_t>;
     mpi::MPIContext ctx;
     const std::size_t num_threads = ctx.threads_per_mpi_process();
@@ -49,9 +62,8 @@ template <typename T> struct ParallelPointerJumping {
     return global_idxs_to_jump_from;
   }
 
-  static Span<std::size_t>
-  execute_one_jump(DistributedArray<T>& array,
-                   Span<std::size_t> global_idx_to_jump_from) {
+  static Span<std::size_t> execute_one_jump(
+      DistributedArray<T>& array, Span<std::size_t> global_idx_to_jump_from) {
     using IndexValue = typename DistributedArray<T>::IndexValue;
     mpi::MPIContext ctx;
     // auto global_v_parents = filter_out_duplicates(global_v_to_jump_from,
@@ -95,22 +107,11 @@ template <typename T> struct ParallelPointerJumping {
       const auto& index_value = reply.buffer[i];
       array.set_value_locally(index_value);
     });
-    auto it = std::remove_if(
-        std::execution::par, global_idx_to_jump_from.begin(),
-        global_idx_to_jump_from.end(), [&](const std::size_t& v_global) {
-          const T value = array.get_value_locally(v_global);
-          return is_MSB_set(value);
-        });
-    const std::size_t num_remainings_non_root_entries =
-        static_cast<std::size_t>(
-            std::distance(global_idx_to_jump_from.begin(), it));
-    return Span(global_idx_to_jump_from.data(),
-                num_remainings_non_root_entries);
+    return keep_non_root_elemens(array, global_idx_to_jump_from);
   }
 
-  static Span<std::size_t>
-  execute_one_jump_filter(DistributedArray<T>& array,
-                          Span<std::size_t> global_idx_to_jump_from) {
+  static Span<std::size_t> execute_one_jump_filter(
+      DistributedArray<T>& array, Span<std::size_t> global_idx_to_jump_from) {
     using IndexValue = typename DistributedArray<T>::IndexValue;
     mpi::MPIContext ctx;
     // auto global_v_parents = filter_out_duplicates(global_v_to_jump_from,
@@ -177,28 +178,17 @@ template <typename T> struct ParallelPointerJumping {
       auto it = grow_map.find(predecessor + 1);
       array.set_value_locally(local_id_to_query, (*it).second);
     });
-    auto it = std::remove_if(
-        std::execution::par, global_idx_to_jump_from.begin(),
-        global_idx_to_jump_from.end(), [&](const std::size_t& v_global) {
-          const T value = array.get_value_locally(v_global);
-          return is_MSB_set(value);
-        });
-    const std::size_t num_remainings_non_root_entries =
-        static_cast<std::size_t>(
-            std::distance(global_idx_to_jump_from.begin(), it));
-    return Span(global_idx_to_jump_from.data(),
-                num_remainings_non_root_entries);
+    return keep_non_root_elemens(array, global_idx_to_jump_from);
   }
   template <typename IsRoot>
   static void execute(DistributedArray<T>& array, IsRoot& is_root) {
     mpi::MPIContext ctx;
-    static_assert(
-        std::is_integral_v<T>); // values will be used as indices during jumping
+    static_assert(std::is_integral_v<T>);  // values will be used as indices
+                                           // during jumping
     static_assert(std::is_unsigned_v<T>);
     parallel_for(array.index_begin(), array.index_end(), [&](std::size_t i) {
       auto& elem = array.get_value_locally(i);
-      if (is_root(i, elem))
-        elem = set_MSB(elem);
+      if (is_root(i, elem)) elem = set_MSB(elem);
     });
     auto global_idxs_to_jump_from = get_global_idxs_to_jump_from(array);
     Span<std::size_t> global_idxs_to_jump_from_span{global_idxs_to_jump_from};
@@ -212,4 +202,4 @@ template <typename T> struct ParallelPointerJumping {
     });
   }
 };
-} // namespace hybridMST
+}  // namespace hybridMST
