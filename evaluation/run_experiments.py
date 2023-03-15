@@ -46,7 +46,7 @@ def main():
     augmented_experiment_name = args.experiment_name + "_" + today.strftime("%d_%m_%Y")
     experiment_dir = parent_dir / augmented_experiment_name
     experiment_dir.mkdir(exist_ok=True, parents=True)
-    path_to_exec = Path(os.getcwd()) / "../../build/benchmarks/mst_benchmarks"
+    path_to_exec = Path(os.getcwd()) / "../build/benchmarks/mst_benchmarks"
     path_to_exec_in_exp_dir = experiment_dir / "mst_benchmarks"
     path_to_submitted_jobs = experiment_dir / "submitted_jobs"
     path_to_submitted_jobs.mkdir(exist_ok=True, parents=True)
