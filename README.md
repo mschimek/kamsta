@@ -1,10 +1,10 @@
 # KaMSTa
 
-Implementations of our distributed **M**inimum **S**panning **T**ree (MST) algorithms which we presented in our paper:
+Implementations of our distributed **M**inimum **S**panning **T**ree (MST) algorithms which we present in our paper:
 
 _Sanders, P. and Schimek, M., 2023. Engineering Massively Parallel MST Algorithms._ to appear in 2023 IEEE International Parallel and Distributed Processing Symposium (IPDPS).
 
-If you use this code in the context of an academic publication, please cite the [freely accessible postprint in the arXiv](https://arxiv.org/abs/2302.12199):
+If you use this code in the context of an academic publication, please cite the [freely accessible postprint](https://arxiv.org/abs/2302.12199):
 ```bibtex
 @misc{https://doi.org/10.48550/arxiv.2302.12199,
   doi = {10.48550/ARXIV.2302.12199},
