@@ -4,7 +4,7 @@
 
 Implementations of our distributed **M**inimum **S**panning **T**ree (MST) algorithms which we present in our paper:
 
-_Sanders, P. and Schimek, M., 2023. Engineering Massively Parallel MST Algorithms._ to appear in 2023 IEEE International Parallel and Distributed Processing Symposium (IPDPS).
+_P. Sanders and M. Schimek. Engineering Massively Parallel MST Algorithms._ to appear in 2023 IEEE International Parallel and Distributed Processing Symposium (IPDPS).
 
 If you use this code in the context of an academic publication, please cite the [freely accessible postprint](https://arxiv.org/abs/2302.12199):
 ```bibtex
@@ -31,7 +31,7 @@ If you use this code in the context of an academic publication, please cite the 
 
 To compile the code use the following instructions:
 ```
-  git clone --recursive
+  git clone --recursive <https://github.com/mschimek/kamsta.git|git@github.com:mschimek/kamsta.git>
   cmake -B build -DCMAKE_BUILD_TYPE=Release [-DUSE_EXPLICIT_INSTANTIATION=ON]
   cmake --build build --parallel
 ```
