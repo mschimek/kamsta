@@ -38,21 +38,27 @@ To compile the code use the following instructions:
 
 ## Usage
 
-To compile the code use the following instruction
-```
+To execute the code use the following instructions:
+
+```sh
   export OMP_NUM_THREADS=<number threads>
   mpiexec -n <number mpi processes> ./build/benchmarks/mst_benchmarks [kamsta parameters (--help for help])
 ```
-See the evaluation directory for generating preconfigured parameter settings similar to the ones we used in our experiments.
+See the [evaluation directory](https://github.com/mschimek/kamsta/tree/main/evaluation) for generating preconfigured parameter settings similar to the ones we used in our experiments.
 
 Furthermore, it is important that `OMP_NUM_THREADS` matches the kamsta parameter `--threads`.
 If you use multithreading, you should consider allocating enough CPUs per MPI process to avoid performance problems.
+
+
+## Dependencies
+Apart from the included submodules we use `OpenMP` and `Thread Building Blocks`(TBB).
+
 
 ## Notes
 Note that due to restrictions in the graph generator, we tested our implementation only with number of threads and number of mpi processes being powers of two.
 We tested our implementation with GCC 10/11/12 and OpenMPI 4.0.
 
-If you encounter problems, feel free to contact us or open a pull request.
+The code version used in our paper can be found in [this release](https://github.com/mschimek/kamsta/releases/tag/v0.2).
 
-## Dependencies
-Apart from the included submodules we use `OpenMP` and `Thread Building Blocks`(TBB).
+
+If you encounter problems, feel free to contact us or open a pull request.
