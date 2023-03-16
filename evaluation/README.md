@@ -16,7 +16,7 @@ python ./generate_jobs.py --experiment_parent_directory <path to directory where
                           --platform <shared_memory|supermuc|horeka>
 ```
 
-See `experiment_suites` for YAML files used in our experiments.
+See `experiment_suites` for YAML files with the settings used in our experiments.
 
 For real-world graphs we use a binary graph format which simply stores a (possibly unsorted) edge list representation of the graphs.
 Each edge is a 9 Byte record (4 Byte source/destination vertex, 1 Byte edge weight).
