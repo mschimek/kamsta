@@ -1,3 +1,5 @@
+[![DOI](https://zenodo.org/badge/602074500.svg)](https://zenodo.org/badge/latestdoi/602074500)
+
 # KaMSTa
 
 Implementations of our distributed **M**inimum **S**panning **T**ree (MST) algorithms which we present in our paper:
