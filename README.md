@@ -42,7 +42,7 @@ To execute the code use the following instructions:
 
 ```sh
   export OMP_NUM_THREADS=<number threads>
-  mpiexec -n <number mpi processes> ./build/benchmarks/mst_benchmarks [kamsta parameters (--help for help])
+  mpiexec -n <number mpi processes> ./build/benchmarks/mst_benchmarks [kamsta parameters (--help for help)]
 ```
 See the [evaluation directory](https://github.com/mschimek/kamsta/tree/main/evaluation) for generating preconfigured parameter settings similar to the ones we used in our experiments.
 
