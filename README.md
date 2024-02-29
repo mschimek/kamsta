@@ -4,7 +4,9 @@
 
 Implementations of our distributed **M**inimum **S**panning **T**ree (MST) algorithms which we present in our paper:
 
-_P. Sanders and M. Schimek. Engineering Massively Parallel MST Algorithms._ to appear in 2023 IEEE International Parallel and Distributed Processing Symposium (IPDPS).
+_P. Sanders and M. Schimek. Engineering Massively Parallel MST Algorithms._
+
+published in the proceedings of the 2023 IEEE International Parallel and Distributed Processing Symposium (IPDPS).
 
 If you use this code in the context of an academic publication, we kindly ask you to [cite it](https://doi.org/10.1109/IPDPS54959.2023.00075):
 ```bibtex
