@@ -6,24 +6,22 @@ Implementations of our distributed **M**inimum **S**panning **T**ree (MST) algor
 
 _P. Sanders and M. Schimek. Engineering Massively Parallel MST Algorithms._ to appear in 2023 IEEE International Parallel and Distributed Processing Symposium (IPDPS).
 
-If you use this code in the context of an academic publication, please cite the [freely accessible postprint](https://arxiv.org/abs/2302.12199):
+If you use this code in the context of an academic publication, we kindly ask you to [cite it](https://doi.org/10.1109/IPDPS54959.2023.00075):
 ```bibtex
-@misc{https://doi.org/10.48550/arxiv.2302.12199,
-  doi = {10.48550/ARXIV.2302.12199},
-  
-  url = {https://arxiv.org/abs/2302.12199},
-  
-  author = {Sanders, Peter and Schimek, Matthias},
-  
-  keywords = {Distributed, Parallel, and Cluster Computing (cs.DC), FOS: Computer and information sciences, FOS: Computer and information sciences},
-  
-  title = {Engineering Massively Parallel MST Algorithms},
-  
-  publisher = {arXiv},
-  
-  year = {2023},
-  
-  copyright = {arXiv.org perpetual, non-exclusive license}
+@inproceedings{DBLP:conf/ipps/SandersS23,
+  author       = {Peter Sanders and
+                  Matthias Schimek},
+  title        = {Engineering Massively Parallel {MST} Algorithms},
+  booktitle    = {{IEEE} International Parallel and Distributed Processing Symposium,
+                  {IPDPS} 2023, St. Petersburg, FL, USA, May 15-19, 2023},
+  pages        = {691--701},
+  publisher    = {{IEEE}},
+  year         = {2023},
+  url          = {https://doi.org/10.1109/IPDPS54959.2023.00075},
+  doi          = {10.1109/IPDPS54959.2023.00075},
+  timestamp    = {Tue, 25 Jul 2023 16:27:14 +0200},
+  biburl       = {https://dblp.org/rec/conf/ipps/SandersS23.bib},
+  bibsource    = {dblp computer science bibliography, https://dblp.org}
 }
 ```
 
